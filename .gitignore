@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next/
+dist/
+build/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Env files (NEVER commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Signing keys
+keys/
+*.pem
+*.key
+
+# Logs / runtime
+*.log
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Test
+coverage/
+
+# Claude local state
+.claude/

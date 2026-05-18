@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>XAA Requesting App</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Cross App Access &mdash; Requesting App</h1>
+      <p class="sub">IdP: <code><%= config.idpUrl %></code> &middot; Resource AS: <code><%= config.authServerUrl %></code></p>
+    </header>
+
+    <section class="auth">
+      <% if (user) { %>
+        <p>Signed in as <strong><%= user.email %></strong> <span class="muted">(<%= user.sub %>)</span></p>
+        <a class="btn btn-secondary" href="/auth/logout">Log out</a>
+      <% } else { %>
+        <p>You are not signed in.</p>
+        <a class="btn btn-primary" href="/auth/login">Log in with xaa.dev IdP</a>
+      <% } %>
+    </section>
+
+    <% if (user) { %>
+      <section class="mode">
+        <h2>Mode</h2>
+        <div class="switch">
+          <label><input type="radio" name="mode" value="normal" checked /> Normal app <span class="muted">(REST &rarr; <%= config.normalResourceUrl %>)</span></label>
+          <label><input type="radio" name="mode" value="mcp" /> MCP client <span class="muted">(MCP &rarr; <%= config.mcpResourceUrl %>)</span></label>
+        </div>
+        <p class="muted">Both modes share the same Cross App Access core: OIDC login &rarr; token-exchange for an ID-JAG &rarr; JWT-bearer for a resource access token. Only the downstream call differs.</p>
+        <button id="callBtn" class="btn btn-primary">Run flow</button>
+      </section>
+
+      <section class="output">
+        <h2>Result</h2>
+        <pre id="result" class="result">(no call yet)</pre>
+      </section>
+    <% } %>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
