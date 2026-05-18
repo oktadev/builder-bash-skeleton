@@ -1,0 +1,43 @@
+# XAA Hackathon Kit
+
+> A spec-first prompt kit for building a Cross-App Access (XAA)
+> Requesting App against the public xaa.dev playground — in any
+> language or framework. Implements OIDC + PKCE login, RFC 8693 token
+> exchange, RFC 7523 jwt-bearer, and RFC 6750 bearer error mapping.
+
+The kit at `hackathon-kit/` is the authoritative spec. AI coding agents
+should start at `hackathon-kit/IGNITION.md`. The three target hosts are
+fixed: `https://idp.xaa.dev`, `https://auth.resource.xaa.dev`,
+`https://api.resource.xaa.dev`.
+
+## Entry points
+
+- [IGNITION.md](hackathon-kit/IGNITION.md): Paste-into-agent runbook for Codex / Claude Code / Cursor / Aider with filesystem access.
+- [Chat-only ignition](hackathon-kit/ignition/chat-only.md): Copy-paste ignition flow for ChatGPT browser and tools without filesystem access.
+- [README.md](hackathon-kit/README.md): Developer help doc — what you can build with the kit, the stack picker, and Day-0 checklist.
+- [Task brief (00)](hackathon-kit/00-brief.md): The "what we're building" spec for the AI's first context message.
+
+## Numbered prompts (execute in order)
+
+- [01 — Project skeleton](hackathon-kit/01-project-skeleton.md): Stack scaffold, env config, session adapter, logger.
+- [02 — OIDC login](hackathon-kit/02-oidc-login.md): Authorization Code + PKCE S256, state + nonce, server-side session.
+- [03 — Token exchange](hackathon-kit/03-token-exchange.md): RFC 8693 token-exchange to ID-JAG, then RFC 7523 jwt-bearer to access token.
+- [04 — Protected resource call](hackathon-kit/04-protected-resource-call.md): Bearer call + WWW-Authenticate decoding + ErrorCode mapping.
+- [05 — UI and observability](hackathon-kit/05-ui-and-observability.md): Dashboard, redacted token surface, request timeline.
+- [06 — Debugging playbook](hackathon-kit/06-debugging-playbook.md): Thirteen failure shapes with diagnostic prompts (reference, not a step).
+- [07 — Testing](hackathon-kit/07-testing.md): T1–T5 hermetic + B1–B9 smoke + E1–E5 manual scenarios.
+
+## Reference
+
+- [Glossary](hackathon-kit/reference/glossary.md): Terminology anchors — Identities, Tokens, Wire-format pieces, XAA-specific terms.
+- [Env vars](hackathon-kit/reference/env-vars.md): Three fixed hosts + nine per-developer credentials, with registration walkthrough.
+- [XAA spec](hackathon-kit/reference/xaa-spec.md): Canonical wire format for both grants — exact form fields, audience semantics.
+- [Error mapping](hackathon-kit/reference/error-mapping.md): ErrorCode set + WWW-Authenticate + token-exchange decoding tables.
+- [Architecture](hackathon-kit/reference/architecture.md): Flow diagrams for the four hops and the two-client pattern.
+
+## Repo-root agent files
+
+- [AGENTS.md](AGENTS.md): Auto-loaded by Codex / Cursor — invariants digest.
+- [CLAUDE.md](CLAUDE.md): Auto-loaded by Claude Code — invariants digest.
+- [.cursorrules](.cursorrules): Cursor project rules.
+- [.env.example](.env.example): Env-var template — copy to `.env.local` and fill in.
