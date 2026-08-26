@@ -68,7 +68,10 @@ diverge only in the first two diagrams below; the XAA exchange is shared.
 
 ---
 
-## Path convergence
+## The two axes
+
+`XAA_PROTOCOL` converges at Step 1. `APP_TYPE` diverges at Step 3. The
+middle is shared by all four combinations.
 
 ```
   ┌─ OIDC ────────────────────────────────────────────┐
@@ -83,10 +86,18 @@ diverge only in the first two diagrams below; the XAA exchange is shared.
   └──────────────────┬───────────────┘│
                      └────────────────┤
                                       ▼
-                        ══ identical from here ══
+                     ══ shared by every build ══
                      Step 1  refresh token → ID-JAG
                      Step 2  ID-JAG → access token
-                     Step 3  Bearer call
+                                      │
+                     ═════ APP_TYPE diverges here ═════
+                                      │
+              ┌───────────────────────┴───────────────────────┐
+              ▼                                               ▼
+   Step 3a  standalone                             Step 3b  MCP client
+   GET api.resource.xaa.dev/…                      POST mcp.xaa.dev/mcp
+   Authorization: Bearer                           via OFFICIAL MCP SDK
+   → JSON body                                     → resources/read
 ```
 
 ---
@@ -205,7 +216,7 @@ Browser     Requesting App           IdP /token        AuthServer /token        
    │                    │ ← {access_token: <Bearer>, expires_in:7200}│                         │
    │                    │   (no refresh_token — by design)           │                         │
    │                    │                                            │                         │
-   │                    │  STEP 3                                                              │
+   │                    │  STEP 3a  (APP_TYPE=standalone)                                      │
    │                    │  GET https://api.resource.xaa.dev${RESOURCE_PATH}                    │
    │                    │   Authorization: Bearer <access_token>                               │
    │                    │ ───────────────────────────────────────────────────────────────────▶│
@@ -213,6 +224,49 @@ Browser     Requesting App           IdP /token        AuthServer /token        
    │ 200 CallResult     │                                                                      │
    │ ◀──────────────────│                                                                      │
 ```
+
+### Step 3b — MCP client (`APP_TYPE=mcp`)
+
+Same access token, different consumer. The **official MCP SDK** owns
+everything to the right of the kit boundary.
+
+```
+   Requesting App                                    mcp.xaa.dev/mcp
+   │                                                        │
+   │  ┌──────────────────────────────────────┐              │
+   │  │ KIT: access token from Step 2        │              │
+   │  └──────────────┬───────────────────────┘              │
+   │                 │ inject (never let the SDK fetch one) │
+   │  ┌──────────────▼───────────────────────┐              │
+   │  │ OFFICIAL MCP SDK                     │              │
+   │  │  StreamableHTTP transport            │              │
+   │  │  protocolVersion 2025-03-26          │              │
+   │  └──────────────┬───────────────────────┘              │
+   │                 │  POST  initialize                    │
+   │                 │   Authorization: Bearer <token>      │
+   │                 │   Accept: application/json,          │
+   │                 │           text/event-stream          │
+   │                 │ ────────────────────────────────────▶│
+   │                 │ ← InitializeResult (capabilities)    │
+   │                 │  POST  notifications/initialized     │
+   │                 │ ────────────────────────────────────▶│
+   │                 │  POST  resources/list                │
+   │                 │ ────────────────────────────────────▶│
+   │                 │ ← todo0://todos, …/completed, …      │
+   │                 │  POST  resources/read                │
+   │                 │   {"uri":"todo0://todos"}            │
+   │                 │ ────────────────────────────────────▶│
+   │                 │ ← contents                           │
+```
+
+`todo0-mcp` exposes **resources, not tools** — `tools/list` returns
+nothing useful here.
+
+**Where the boundary sits.** The kit stops at "here is a valid access
+token." The SDK does JSON-RPC framing, the `initialize` handshake,
+capability negotiation, transport, and the `resources/*` calls. MCP's own
+OAuth — RFC 9728 discovery, DCR, auth-code + PKCE — is used by **neither**,
+deliberately: the token already exists.
 
 Two distinct OAuth client identities:
 

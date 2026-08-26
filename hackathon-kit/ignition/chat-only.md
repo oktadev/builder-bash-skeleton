@@ -17,9 +17,11 @@ You're talking to an AI that can write code but **can't read your
 files**. So you have to feed it the spec piece by piece. Use this
 sequence:
 
-## Step 1 — pick your protocol path (decide this first, yourself)
+## Step 1 — pick two paths (decide these first, yourself)
 
-Before you paste anything, decide:
+Before you paste anything, decide both. They're independent.
+
+**Protocol — how you log in:**
 
 - **OIDC** (default, recommended) — Authorization Code + PKCE login.
   Pick this unless you have a specific reason not to. Fewer moving
@@ -29,24 +31,42 @@ Before you paste anything, decide:
   this if you're modelling an app whose IdP integration is already
   SAML, or you specifically want to exercise the SAML path.
 
-**Everything from Step 1 of the flow onward is identical on both
-paths.** This is one fork near the start, not two builds.
+**Application type — what you do with the token:**
 
-When you paste kit sections later, **paste only the branches for your
-path** — sections are marked `### ▸ OIDC path` / `### ▸ SAML path`, and
-whole-step skips are marked `> **SAML path only.**` /
-`> **OIDC path only.**`. Pasting both will make the AI mix them.
+- **standalone** (default) — your app calls a protected REST resource
+  itself with `Authorization: Bearer`.
+- **MCP client** — your app drives an MCP server through the **official
+  MCP SDK**, using the same XAA-minted token. Adds one dependency and a
+  fourth host.
+
+**No constraint? OIDC + standalone.**
+
+The two axes touch different parts of the flow: protocol changes Step 0,
+app type changes Step 3. There's no combined "SAML + MCP" variant — it's
+the SAML Step 0 plus the MCP Step 3.
+
+When you paste kit sections later, **paste only your branches** —
+`### ▸ …` sections are alternatives and `> **… only.**` blocks are
+skippable. Pasting both will make the AI mix them.
 
 ## Step 2 — establish context (paste verbatim, one message)
 
-Replace `<OIDC|SAML>` with your choice from Step 1.
+Replace `<OIDC|SAML>` and `<standalone|MCP client>` with your choices
+from Step 1.
 
 ```
 You are a senior engineer helping me build a Cross-App Access (XAA)
 Requesting App against the public xaa.dev playground. I am building the
-<OIDC|SAML> path. The full task spec follows in subsequent messages —
-read each, but only act when I explicitly ask you to implement
-something.
+<OIDC|SAML> protocol path as a <standalone|MCP client> application. The
+full task spec follows in subsequent messages — read each, but only act
+when I explicitly ask you to implement something.
+
+If I said MCP client: use the OFFICIAL MCP SDK
+(@modelcontextprotocol/sdk for Node/TS, mcp for Python) for all MCP
+protocol work — JSON-RPC framing, initialize, transport, resources/*.
+Do not reimplement any of it, and do NOT let the SDK acquire its own
+token via its built-in OAuth (RFC 9728 discovery / DCR / auth-code).
+The XAA flow mints the access token; the SDK is handed that token.
 
 Non-negotiables across the whole build:
 - The IdP REFRESH TOKEN is the session anchor, obtained by requesting the

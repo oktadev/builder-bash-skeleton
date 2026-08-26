@@ -1,18 +1,22 @@
-# 04 — Protected resource call + error mapping
+# 04 — Using the access token + error mapping
 
-## Prompt
+> **This file branches on `APP_TYPE`.** § Shared applies to everyone,
+> then read **either** § Step 3a (standalone) **or** § Step 3b (MCP
+> client) — not both.
+>
+> Both branches consume the *same* access token from `03` and produce the
+> *same* `ApiError | CallResult` shape. The ErrorCode set does not grow.
 
-> Implement the protected-resource layer that ties the XAA flow to a
-> real HTTP fetch and gives the UI a stable error contract.
+## Prompt — shared
+
+> Implement the layer that ties the XAA flow to a real call and gives the
+> UI a stable error contract.
 >
 > 1. **`POST /api/call`** is session-gated. If no session (or no refresh
 >    token in it) → `{ok:false, error:"unauthorized"}` (HTTP 401).
 > 2. With a session: run `exchangeForResourceAccessToken()` from 03 with
->    the session's **refresh token**, then
->    `GET https://api.resource.xaa.dev${RESOURCE_PATH}`
->    (default `RESOURCE_PATH=/api/todos`; BYOR overrides the host) with:
->      - `Authorization: Bearer <access_token>`
->      - `Accept: application/json`
+>    the session's **refresh token** to obtain an access token. Then hand
+>    that token to your `APP_TYPE` branch below.
 > 3. Map upstream outcomes into a stable `ApiError | CallResult` shape
 >    per `reference/error-mapping.md` § ErrorCode set.
 > 4. Decode `WWW-Authenticate: Bearer error="…"` per
@@ -54,6 +58,157 @@
 >   buffer.
 > - **`DELETE /api/logs`** — clear the buffer.
 
+---
+
+## ▸ Step 3a — standalone
+
+> **`APP_TYPE=standalone`.** MCP readers: skip to § Step 3b.
+
+> With the access token from the shared step, call
+> `GET https://api.resource.xaa.dev${RESOURCE_PATH}`
+> (default `RESOURCE_PATH=/api/todos`; BYOR overrides the host) with:
+>   - `Authorization: Bearer <access_token>`
+>   - `Accept: application/json`
+>
+> Decode `WWW-Authenticate: Bearer error="…"` per
+> `reference/error-mapping.md` § Decoding `WWW-Authenticate`.
+
+Nothing beyond your stack's HTTP client is required.
+
+---
+
+## ▸ Step 3b — MCP client
+
+> **`APP_TYPE=mcp`.** Standalone readers: skip this section.
+
+> Use the **official MCP SDK** for all protocol work. Your job is to
+> supply the XAA-minted access token and to keep the SDK from acquiring
+> one of its own.
+>
+> 1. Construct a `StreamableHTTPClientTransport` pointed at
+>    `MCP_SERVER_URL`, passing an `authProvider` whose `tokens()` returns
+>    the access token from the shared step.
+> 2. Connect a `Client`, then call `resources/list` and
+>    `resources/read` on `todo0://todos`. **Not** `tools/*` —
+>    `todo0-mcp` exposes no tools.
+> 3. **Assert the negotiated protocol version.** The SDK proposes its
+>    `LATEST_PROTOCOL_VERSION` and negotiates down; xaa.dev speaks
+>    `2025-03-26`. Log what was actually agreed and compare against
+>    `MCP_PROTOCOL_VERSION`.
+> 4. Map transport and JSON-RPC failures onto the same `ErrorCode` set
+>    per `reference/error-mapping.md` § MCP transport and JSON-RPC
+>    failures, tagging `upstream_step: "step3"`.
+
+### How the token gets in
+
+Verified against **`@modelcontextprotocol/sdk@1.30.0`**. The transport
+accepts `{ authProvider, requestInit, fetch, reconnectionOptions,
+sessionId }`, and its header builder does exactly this:
+
+```js
+const tokens = await this._authProvider.tokens();
+if (tokens) headers['Authorization'] = `Bearer ${tokens.access_token}`;
+```
+
+So **`tokens()` returning your token is sufficient** — and `auth()` (which
+performs RFC 9728 discovery and DCR) is invoked *only* from the SDK's 401
+handlers. On the happy path with a valid token, **no discovery request is
+made at all.**
+
+`OAuthClientProvider` has eight required members in 1.30.0, but only
+`tokens()` participates in this flow. Implement the rest as loud failures
+so an accidental OAuth attempt is impossible to miss:
+
+```ts
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+
+/**
+ * Supplies the XAA-minted access token to the MCP SDK.
+ * Deliberately NOT a working OAuth client: every member that would
+ * acquire a token throws, so a silent fallback to MCP's own OAuth
+ * becomes a visible crash instead.
+ */
+function xaaAuthProvider(accessToken: string): OAuthClientProvider {
+  const refuse = (what: string) => () => {
+    throw new Error(
+      `MCP SDK attempted its own OAuth (${what}). The access token is ` +
+      `minted by the XAA flow; the SDK must not acquire one. See ` +
+      `hackathon-kit/06-debugging-playbook.md D-23.`
+    );
+  };
+  return {
+    // Non-interactive: there is no user-agent redirect in this flow.
+    get redirectUrl() { return undefined; },
+    get clientMetadata() { return { redirect_uris: [] }; },
+    tokens: () => ({ access_token: accessToken, token_type: 'Bearer' }),
+    clientInformation: () => undefined,
+    saveTokens: refuse('saveTokens'),
+    redirectToAuthorization: refuse('redirectToAuthorization'),
+    saveCodeVerifier: refuse('saveCodeVerifier'),
+    codeVerifier: refuse('codeVerifier'),
+  };
+}
+
+export async function callViaMcp(accessToken: string, mcpUrl: string) {
+  const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
+    authProvider: xaaAuthProvider(accessToken),
+  });
+  const client = new Client({ name: 'xaa-hackathon-kit', version: '3.0.0' });
+
+  await client.connect(transport);
+  try {
+    const negotiated = transport.protocolVersion;   // assert this
+    const resources = await client.listResources();
+    const contents = await client.readResource({ uri: 'todo0://todos' });
+    return { negotiated, resources, contents };
+  } finally {
+    await client.close();
+  }
+}
+```
+
+`redirectUrl` returning `undefined` is explicitly supported — the SDK
+documents it for *"non-interactive flows that don't require user
+interaction (e.g. `client_credentials`, `jwt-bearer`)."*
+
+> **Python:** the same shape applies — supply the bearer token to the
+> `streamablehttp_client` transport rather than letting the SDK's OAuth
+> provider acquire one. `TODO(confirm)` — exact parameter name in the
+> current `mcp` release; the TypeScript path above is the one this kit
+> has verified.
+
+### Why not a `fetch` wrapper?
+
+You *can* pass `{ fetch }` and set the header yourself. Don't: it leaves
+`_authProvider` unset, so the SDK's 401 handling never runs and a rejected
+token surfaces as an opaque transport error instead of something you can
+map. The `authProvider` seam is the supported extension point.
+
+### Version note
+
+The SDK's `main` branch (unreleased `@modelcontextprotocol/client` v2)
+adds a **much smaller** seam for exactly this case —
+
+```ts
+interface AuthProvider {
+  token(): Promise<string | undefined>;
+  onUnauthorized?(ctx: UnauthorizedContext): Promise<void>;
+}
+```
+
+— where omitting `onUnauthorized` makes the transport throw
+`UnauthorizedError` instead of starting an OAuth flow, and where
+`onUnauthorized` is the natural home for the kit's *re-mint once* rule
+(the transport retries exactly once, then throws). v2 also ships an
+`IdJagTokenExchangeResponseSchema` and documents `resourceUrl()` /
+`authorizationServerUrl()` as hooks *"for providers implementing
+Cross-App Access."* **None of that is in 1.30.0** — write against the
+`OAuthClientProvider` shape above today, and simplify when v2 lands.
+
+---
+
 ## Objective
 
 Give the UI a stable, parseable error shape regardless of which layer
@@ -68,6 +223,8 @@ of the chain (IdP / auth-server / resource) failed.
 | `requiresReauth` flag               | Set when Step 1 rejects the refresh token. The UI's cue to offer sign-in rather than retry. |
 | `/api/call` route                   | Session-gated. Maps `ErrorCode → HTTP`. Always returns JSON.     |
 | `/api/logs` route                   | GET returns the ring buffer; DELETE clears it.                   |
+| *(mcp)* `authProvider` supplying the XAA token | `tokens()` returns the Step-2 access token; every acquisition member throws. |
+| *(mcp)* negotiated-version assertion | Logged and compared against `MCP_PROTOCOL_VERSION`.             |
 
 ## Decisions to make
 
@@ -116,8 +273,9 @@ of the chain (IdP / auth-server / resource) failed.
 
 ## Verification
 
-Hermetic tests for `callProtectedResource()` must cover all eight
-outcome paths (mock the fetch, not the network):
+Hermetic tests for `callProtectedResource()` must cover these outcome
+paths (mock the HTTP boundary, not the network). Rows apply to both app
+types unless marked:
 
 | Scenario                                            | Expected                  |
 | --------------------------------------------------- | ------------------------- |
@@ -132,6 +290,9 @@ outcome paths (mock the fetch, not the network):
 | IdP returns `invalid_grant` on Step 1               | `expired_token`, `upstream_step: "step1"`, `requiresReauth: true`, and **no retry attempted** |
 | Auth server returns `invalid_grant` on Step 2       | `expired_token`, `upstream_step: "step2"` |
 | Session exists but holds no refresh token           | `unauthorized`            |
+| *(mcp)* JSON-RPC `-32000` `"Invalid or expired access token"` | `invalid_token` / `expired_token`, `upstream_step: "step3"` |
+| *(mcp)* JSON-RPC `-32601` method not found          | `resource_failure`, `upstream_step: "step3"` |
+| *(mcp)* **only `MCP_SERVER_URL` is contacted**       | **No** request to any `/.well-known/…`, no DCR, no redirect. This is the architecture test — see `07` § T8.2. |
 
 Live curl:
 
@@ -140,6 +301,30 @@ curl -sS -X POST http://localhost:<port>/api/call
 # Expect: 401 {"ok":false,"error":"unauthorized","message":"Not authenticated. Log in first."}
 ```
 
-End-to-end: with a real session, `POST /api/call` returns
-`{ok:true, response:{status:200, body:{…}}, tokens:{idJag:"head…tail",
-accessToken:"head…tail", scopes:["…"]}}`.
+**MCP mode — confirm the server is reachable and gated before debugging
+your own client:**
+
+```bash
+curl -sS https://mcp.xaa.dev/health
+# → {"status":"healthy","service":"mcp-server",…}
+
+curl -sS -i -X POST https://mcp.xaa.dev/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}'
+# → 401 + www-authenticate: Bearer resource_metadata="…/oauth-protected-resource/mcp"
+#   {"jsonrpc":"2.0","error":{"code":-32000,"message":"Unauthorized: No access token provided"},"id":null}
+```
+
+That 401 is the correct, healthy response — it proves the endpoint exists
+and is protected. Add `-H "Authorization: Bearer ${ACCESS_TOKEN}"` with a
+real token to go further.
+
+End-to-end, with a real session, `POST /api/call` returns:
+
+- **standalone:** `{ok:true, response:{status:200, body:{…}},
+  tokens:{idJag:"head…tail", accessToken:"head…tail", scopes:["…"]}}`
+- **mcp:** the same envelope with the MCP payload in place of an HTTP
+  body — negotiated protocol version, `resources/list` URIs, and the
+  `resources/read` contents. No `status` field, because a successful MCP
+  call is a JSON-RPC result rather than an HTTP status.

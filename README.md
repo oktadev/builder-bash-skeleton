@@ -50,20 +50,57 @@ token" and "the session is over, sign in again."
 
 ---
 
-## Pick a protocol path first
+## Pick two paths first
 
-The one decision to make before anything else.
+Two decisions before anything else. They're independent, and each is one
+question.
+
+**1. Protocol — how you log in (`XAA_PROTOCOL`)**
 
 | Path                 | Step 0 is…                                                                 | Pick it when                                                          |
 | -------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | **OIDC** *(default)* | Authorization Code + PKCE. Returns an ID Token **and** a refresh token.    | You have no constraint. Fewer moving parts; the path xaa.dev's own docs cover. |
 | **SAML**             | SP-initiated Web Browser SSO, then one extra exchange (**Step 0b**) trading the assertion for a refresh token. | You're modelling an app whose IdP integration is already SAML, or you want to exercise SAML deliberately. |
 
-**No constraint? Pick OIDC.** Set `XAA_PROTOCOL` accordingly.
+**2. Application type — what you do with the token (`APP_TYPE`)**
 
-The paths diverge only at Step 0 and Step 0b — **from Step 1 onward they
-are identical.** One fork near the start, not two builds. Reading load
-for a single path is roughly what v2 was.
+| Type                       | Step 3 is…                                                                                      | Pick it when                                                        |
+| -------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **standalone** *(default)* | Your app calls a protected REST resource itself with `Authorization: Bearer`. No extra deps.     | You're building a conventional web app or service.                  |
+| **MCP client**             | Your app drives an MCP server through the **official MCP SDK**, using that same token. Adds one dependency and a fourth host. | You're building an agent-facing client that consumes MCP resources or tools. |
+
+**No constraint? OIDC + standalone.**
+
+### Why this is two forks, not four builds
+
+```
+                 Step 0 / 0b      Step 1        Step 2      Step 3
+  XAA_PROTOCOL   OIDC │ SAML      shared        shared      shared
+  APP_TYPE       shared           scopes only   shared      Standalone │ MCP
+```
+
+The axes touch different parts of the flow and never interact — there's no
+"SAML + MCP" variant to learn, just the SAML Step 0 plus the MCP Step 3.
+`APP_TYPE` reaches Step 1 only as configuration (MCP needs `mcp.access` in
+the scope list), never as logic. Reading load for any single combination is
+roughly what v2 was.
+
+### Where the kit ends and the MCP SDK begins
+
+The kit gives you one foundation for both app types. In MCP mode the split
+is deliberate and strict:
+
+| Concern | Owner |
+| ------- | ----- |
+| Login (OIDC or SAML), refresh token, ID-JAG, access token, session, config, redaction, error taxonomy, observability | **this kit** |
+| JSON-RPC framing, `initialize`, capability negotiation, transport, `resources/*`, `tools/*` | **official MCP SDK** |
+| MCP's own OAuth — RFC 9728 discovery, DCR, auth-code + PKCE | **neither, deliberately** |
+
+**The kit mints the token; the SDK receives it.** MCP's built-in
+authorization is an *alternative* way to acquire a token, not a complement
+to XAA — here one already exists before the client connects. The kit never
+reimplements MCP protocol handling, and never lets the SDK go looking for
+its own credentials.
 
 ---
 
@@ -83,10 +120,11 @@ Treat the kit as a template. Here's the surface area you control:
 | **Customise scopes + claims**        | `RESOURCE_SCOPES` controls what you ask for; the kit's error mapping handles `insufficient_scope` cleanly when you ask for too much.                                                                       |
 | **Extend the test matrix**           | The hermetic rows (~36 on OIDC, ~41 on SAML) + 9 smoke probes + E1–E7 manual scenarios in `hackathon-kit/07-testing.md` are the *minimum*. Add more — the error-mapping union is designed for it.          |
 
-What you do **not** control: the three xaa.dev hostnames (`idp.xaa.dev`,
-`auth.resource.xaa.dev`, `api.resource.xaa.dev`), the URN spellings, the
-PKCE method (S256), and the eight-element `ErrorCode` set. Those are the
-spec.
+What you do **not** control: the xaa.dev hostnames (`idp.xaa.dev`,
+`auth.resource.xaa.dev`, `api.resource.xaa.dev`, plus `mcp.xaa.dev` in MCP
+mode), the URN spellings, the PKCE method (S256), and the eight-element
+`ErrorCode` set. Those are the spec. In MCP mode you also don't control
+the MCP protocol itself — that's the official SDK's job, not yours.
 
 The kit is silent on everything else — logger, UI shape, session store,
 test runner — because you should pick what you'll move fastest in. It
@@ -100,9 +138,15 @@ specifies *behaviour*, not libraries.
 OIDC:  authorize(+offline_access) ──► ID Token + REFRESH TOKEN ─┐
 SAML:  SSO ─► assertion ─► [0b] ────► REFRESH TOKEN ────────────┤
                                                                 ▼
-       [1] refresh token → ID-JAG   [2] ID-JAG → access token   [3] Bearer call
-        RFC 8693, CLIENT_*           RFC 7523, RESOURCE_CLIENT_*
-        5 min, single-use-ish        ~2 h, no refresh token
+       [1] refresh token → ID-JAG        [2] ID-JAG → access token
+        RFC 8693, CLIENT_*                RFC 7523, RESOURCE_CLIENT_*
+        5 min, single-use-ish             ~2 h, no refresh token
+                                                    │
+                              ┌─────────────────────┴─────────────────────┐
+                              ▼                                           ▼
+                    [3a] standalone                            [3b] MCP client
+                    GET api.resource.xaa.dev/…                 POST mcp.xaa.dev/mcp
+                    Authorization: Bearer                      via OFFICIAL MCP SDK
 
                         └──── re-run 1+2 on every /api/call ────┘
 ```
@@ -189,15 +233,15 @@ in PowerShell as a fallback.
 The kit is library-agnostic, but you'll move faster with a known-good
 defaults set:
 
-| Language        | HTTP framework              | OIDC client                                          | SAML library *(SAML path only)*        | Session                          | Test runner   |
-| --------------- | --------------------------- | ---------------------------------------------------- | -------------------------------------- | -------------------------------- | ------------- |
-| **Python**      | FastAPI                     | `authlib` or `oic`                                   | `python3-saml` or `pysaml2`             | `itsdangerous` cookie / Redis    | `pytest`      |
-| **Node/TS**     | Express / Fastify / Next.js | `openid-client@6`                                    | `@node-saml/node-saml` or `samlify`     | `iron-session` (sealed cookie)   | `vitest`      |
-| **Go**          | `chi` / Gin                 | `coreos/go-oidc` + `golang.org/x/oauth2`             | `crewjam/saml`                          | `gorilla/sessions` (cookie store)| `go test`     |
-| **Rust**        | Axum                        | `openidconnect`                                      | `samael`                                | `tower-sessions` (cookie/Redis)  | `cargo test`  |
-| **Java/Kotlin** | Spring Boot                 | `spring-security-oauth2-client`                      | `spring-security-saml2-service-provider`| Spring Session                   | JUnit 5       |
-| **Ruby**        | Rails / Sinatra             | `omniauth_openid_connect`                            | `ruby-saml`                             | Rails session (cookie)           | RSpec         |
-| **.NET**        | ASP.NET Core                | `Microsoft.AspNetCore.Authentication.OpenIdConnect`  | `Sustainsys.Saml2`                      | Cookie auth handler              | xUnit         |
+| Language        | HTTP framework              | OIDC client                                          | SAML library *(SAML only)*              | MCP SDK *(mcp only)*        | Session                          | Test runner   |
+| --------------- | --------------------------- | ---------------------------------------------------- | -------------------------------------- | --------------------------- | -------------------------------- | ------------- |
+| **Python**      | FastAPI                     | `authlib` or `oic`                                   | `python3-saml` or `pysaml2`             | **`mcp`** (official)        | `itsdangerous` cookie / Redis    | `pytest`      |
+| **Node/TS**     | Express / Fastify / Next.js | `openid-client@6`                                    | `@node-saml/node-saml` or `samlify`     | **`@modelcontextprotocol/sdk`** (official) | `iron-session` (sealed cookie)   | `vitest`      |
+| **Go**          | `chi` / Gin                 | `coreos/go-oidc` + `golang.org/x/oauth2`             | `crewjam/saml`                          | see note below              | `gorilla/sessions` (cookie store)| `go test`     |
+| **Rust**        | Axum                        | `openidconnect`                                      | `samael`                                | see note below              | `tower-sessions` (cookie/Redis)  | `cargo test`  |
+| **Java/Kotlin** | Spring Boot                 | `spring-security-oauth2-client`                      | `spring-security-saml2-service-provider`| see note below              | Spring Session                   | JUnit 5       |
+| **Ruby**        | Rails / Sinatra             | `omniauth_openid_connect`                            | `ruby-saml`                             | see note below              | Rails session (cookie)           | RSpec         |
+| **.NET**        | ASP.NET Core                | `Microsoft.AspNetCore.Authentication.OpenIdConnect`  | `Sustainsys.Saml2`                      | see note below              | Cookie auth handler              | xUnit         |
 
 Anything that speaks HTTPS, parses JSON, can SHA-256 + base64url, and
 stores an httpOnly encrypted cookie will work.
@@ -207,6 +251,15 @@ stores an httpOnly encrypted cookie will work.
 > actively dangerous — XML-DSIG signature-wrapping and XXE are both live
 > risks, and both are easy to get subtly wrong. The OIDC path has no
 > equivalent hazard.
+
+> **On the MCP path, the SDK is not a free choice.** Use the *official*
+> Model Context Protocol SDK for your language. The two rows marked
+> official above are the ones the kit has been written against; for other
+> languages, check <https://modelcontextprotocol.io> for the current list
+> of official SDKs before starting. **If your language has no official
+> SDK, pick a language that does rather than hand-rolling JSON-RPC** — the
+> kit's whole MCP design assumes the protocol layer isn't your code. A
+> community client is a last resort and puts you off the supported path.
 
 ---
 

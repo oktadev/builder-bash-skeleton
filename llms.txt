@@ -8,11 +8,12 @@
 > jwt-bearer to an access token, and RFC 6750 bearer error mapping.
 
 The kit at `hackathon-kit/` is the authoritative spec. AI coding agents
-should start at `hackathon-kit/IGNITION.md`. The three target hosts are
-fixed: `https://idp.xaa.dev`, `https://auth.resource.xaa.dev`,
-`https://api.resource.xaa.dev`.
+should start at `hackathon-kit/IGNITION.md`. The target hosts are fixed:
+`https://idp.xaa.dev`, `https://auth.resource.xaa.dev`,
+`https://api.resource.xaa.dev`, plus `https://mcp.xaa.dev/mcp` when
+`APP_TYPE=mcp`.
 
-Two things define v3 and are easy to get wrong from prior knowledge:
+Three things define v3 and are easy to get wrong from prior knowledge:
 
 1. **The IdP refresh token is the session anchor**, requested via
    `offline_access` and presented as `subject_token` (type
@@ -20,10 +21,27 @@ Two things define v3 and are easy to get wrong from prior knowledge:
    exchange. The ID Token lives ~10 minutes and is *not* the anchor.
    The resource authorization server issues **no** refresh token, by
    design.
-2. **Two login paths.** OIDC (Authorization Code + PKCE) or SAML 2.0
-   (SP-initiated SSO, then an extra Step 0b exchanging the assertion for
-   a refresh token). They diverge only at Step 0/0b; everything from
-   Step 1 onward is identical.
+2. **Two login paths** (`XAA_PROTOCOL=oidc|saml`). OIDC (Authorization
+   Code + PKCE) or SAML 2.0 (SP-initiated SSO, then an extra Step 0b
+   exchanging the assertion for a refresh token). They diverge only at
+   Step 0/0b; everything from Step 1 onward is identical.
+3. **Two application types** (`APP_TYPE=standalone|mcp`), diverging only
+   at Step 3. **standalone** calls a REST resource with
+   `Authorization: Bearer`. **mcp** drives an MCP server through the
+   **official MCP SDK** (`@modelcontextprotocol/sdk`, or `mcp` for
+   Python), authenticated with the same XAA-minted token.
+
+   The boundary is deliberate: **the kit owns authentication, config,
+   session, redaction and the error taxonomy; the official SDK owns the
+   MCP protocol** — JSON-RPC framing, `initialize`, transport,
+   `resources/*`, `tools/*`. The kit does not reimplement MCP. And MCP's
+   own OAuth (RFC 9728 discovery, Dynamic Client Registration, auth-code
+   + PKCE) is used by **neither**: the token already exists before the
+   client connects, so the SDK is handed a token rather than acquiring
+   one.
+
+   The two axes never interact, so there is no combined "SAML + MCP"
+   variant — it's the SAML Step 0 plus the MCP Step 3.
 
 Note the kit's step numbering is offset by one from xaa.dev's own docs —
 this kit's Step 1 is their "Step 2". Mapping table in
@@ -45,7 +63,7 @@ in the flow changes.
 - [01 — Project skeleton](hackathon-kit/01-project-skeleton.md): Stack scaffold, env config, session adapter, logger, refresh-token storage guidance.
 - [02 — User login](hackathon-kit/02-user-login.md): Branched. OIDC: Authorization Code + PKCE S256, state + nonce, `offline_access`. SAML: SP-initiated SSO, RelayState/InResponseTo/audience checks, then Step 0b (`saml2` → `refresh_token`).
 - [03 — Token exchange](hackathon-kit/03-token-exchange.md): RFC 8693 token-exchange from the refresh token to an ID-JAG, then RFC 7523 jwt-bearer to an access token. Path-neutral.
-- [04 — Protected resource call](hackathon-kit/04-protected-resource-call.md): Bearer call + WWW-Authenticate decoding + ErrorCode mapping + the re-mint-vs-re-authenticate rule.
+- [04 — Protected resource call](hackathon-kit/04-protected-resource-call.md): Branches on `APP_TYPE`. Standalone: bearer call + WWW-Authenticate decoding. MCP: official-SDK client with the XAA token injected, `resources/list` + `resources/read`. Both map onto one ErrorCode set, plus the re-mint-vs-re-authenticate rule.
 - [05 — UI and observability](hackathon-kit/05-ui-and-observability.md): Dashboard, redacted token surface, `sub`/`sub_id` rendering, request timeline.
 - [06 — Debugging playbook](hackathon-kit/06-debugging-playbook.md): Nineteen failure shapes with diagnostic prompts, marked by path (reference, not a step).
 - [07 — Testing](hackathon-kit/07-testing.md): Hermetic rows + 9 smoke probes + E1–E7 manual scenarios.

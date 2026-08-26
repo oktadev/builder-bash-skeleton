@@ -36,7 +36,24 @@
 >    narrows under strict mode — see `06-debugging-playbook.md` § D-10.
 > 4. **Hermetic build.** No external services should be required to
 >    install dependencies and start the dev server.
-> 5. Use `reference/env-vars.md` for the env var contract.
+> 5. Use `reference/env-vars.md` for the env var contract. Which vars are
+>    required depends on `XAA_PROTOCOL` **and** `APP_TYPE` — validate the
+>    right set, don't demand all of them.
+> 6. **`APP_TYPE=mcp` only — add the official MCP SDK** and nothing else:
+>
+>    | Language  | Dependency                                  |
+>    | --------- | ------------------------------------------- |
+>    | Node / TS | `@modelcontextprotocol/sdk`                 |
+>    | Python    | `mcp`                                       |
+>
+>    Use the official SDK for the language you picked. Do not add a
+>    community MCP client, and do not write a JSON-RPC layer yourself —
+>    the SDK owns the protocol, the kit owns auth and config. If your
+>    language has no official SDK, tell me before proceeding rather than
+>    hand-rolling one.
+>
+>    On `APP_TYPE=standalone` there is **no** extra dependency; the
+>    standard HTTP client is enough.
 
 ## Objective
 
@@ -48,7 +65,7 @@ chosen stack, with the project layout the rest of the kit will fill in.
 | Capability                         | Notes                                                                    |
 | ---------------------------------- | ------------------------------------------------------------------------ |
 | HTTP server with routing           | Whatever your stack's idiomatic choice is.                               |
-| `loadConfig()` (or equivalent)     | Reads the env vars from `reference/env-vars.md`. Throws on first call if any required var is missing, with the missing var's name. **Which vars are required depends on `XAA_PROTOCOL`** — `REDIRECT_URI` on the OIDC path, `SAML_ACS_URL` + `SAML_NAMEID_FORMAT` on the SAML path. Validate the right set; don't demand both. |
+| `loadConfig()` (or equivalent)     | Reads the env vars from `reference/env-vars.md`. Throws on first call if any required var is missing, with the missing var's name. **The required set depends on both axes** — `REDIRECT_URI` (OIDC) vs `SAML_ACS_URL` + `SAML_NAMEID_FORMAT` (SAML); `RESOURCE_PATH` (standalone) vs `MCP_SERVER_URL` + `MCP_PROTOCOL_VERSION` (MCP). Validate the right combination; don't demand all four groups. |
 | Encrypted session adapter          | httpOnly cookie, `SameSite=Lax`, 8 h max-age. Must encrypt+sign with `SESSION_SECRET`. Holds the refresh token — see § Storing the refresh token. |
 | Logger                             | Writes to stdout in dev. Holds a 200-entry FIFO ring buffer in memory for the observability surface (next prompt). |
 | `.env.example`                     | Documents every required env var with a one-line comment.                |

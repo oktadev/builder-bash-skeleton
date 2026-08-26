@@ -1,8 +1,9 @@
 # Environment variables
 
-The kit targets the public **xaa.dev** playground. The three host URLs
-are fixed; you only set credentials, a session secret, your local
-callback URL, and — new in v3 — which protocol path you're building.
+The kit targets the public **xaa.dev** playground. The host URLs are
+fixed; you only set credentials, a session secret, your local callback
+URL, and — new in v3 — which protocol path and which application type
+you're building.
 
 ---
 
@@ -18,19 +19,77 @@ use you set them once and never touch them.
 | `AUTH_SERVER_URL`   | `https://auth.resource.xaa.dev`    | Resource auth server. Used as `audience` in Step 1.   |
 | `RESOURCE_URL`      | `https://api.resource.xaa.dev`     | Default protected resource (Todo0). Used as `resource` in Step 1. |
 
+Plus, **in MCP mode only**, a fourth host — `MCP_SERVER_URL`, default
+`https://mcp.xaa.dev/mcp`. See § Resource target.
+
 > Bring-your-own-resource (BYOR) overrides `RESOURCE_URL` /
-> `RESOURCE_PATH` / `RESOURCE_SCOPES` only. Discovery and login still
-> go through the fixed IdP.
+> `RESOURCE_PATH` / `RESOURCE_SCOPES` (standalone) or `MCP_SERVER_URL`
+> (MCP) only. Discovery and login still go through the fixed IdP.
 
 ---
 
-## Protocol path (new in v3)
+## The two axes (new in v3)
 
-| Variable        | Values           | What it does                                                     |
-| --------------- | ---------------- | ---------------------------------------------------------------- |
-| `XAA_PROTOCOL`  | `oidc` \| `saml` | Which login path Step 0 takes. Default `oidc`. Determines whether Step 0b runs. |
+Two independent knobs. They touch different parts of the flow, so all
+four combinations are the same build with two small swaps.
 
-Everything from Step 1 onward is identical regardless of this value.
+| Variable        | Values                    | What it changes                                                     |
+| --------------- | ------------------------- | ------------------------------------------------------------------- |
+| `XAA_PROTOCOL`  | `oidc` \| `saml`          | **How you log in** — Step 0, and whether Step 0b runs. Default `oidc`. |
+| `APP_TYPE`      | `standalone` \| `mcp`     | **What you do with the access token** — Step 3 only. Default `standalone`. |
+
+```
+                 Step 0 / 0b      Step 1        Step 2      Step 3
+  XAA_PROTOCOL   OIDC │ SAML      shared        shared      shared
+  APP_TYPE       shared           scopes only   shared      Standalone │ MCP
+```
+
+`APP_TYPE` affects Step 1 only through **configuration** — MCP mode needs
+`mcp.access` in the scope list — never through logic.
+
+---
+
+## Resource target
+
+Which block applies depends on `APP_TYPE`.
+
+### ▸ `APP_TYPE=standalone`
+
+| Variable          | Default            | What it is                                              |
+| ----------------- | ------------------ | ------------------------------------------------------- |
+| `RESOURCE_URL`    | `https://api.resource.xaa.dev` | The REST resource. Used as `resource` in Step 1. |
+| `RESOURCE_PATH`   | `/api/todos`       | Path to call. Todo0 also exposes `/api/todos/completed`, `/incomplete`, `/stats`, `/:id` — all `GET`, all `todos.read`. |
+| `RESOURCE_SCOPES` | `todos.read`       | Space- or comma-separated.                              |
+
+### ▸ `APP_TYPE=mcp`
+
+| Variable               | Default                        | What it is                                                    |
+| ---------------------- | ------------------------------ | ------------------------------------------------------------- |
+| `MCP_SERVER_URL`       | `https://mcp.xaa.dev/mcp`      | The MCP endpoint. **A fourth host** — see the note below.     |
+| `MCP_PROTOCOL_VERSION` | `2025-03-26`                   | What the playground speaks. **Not** `2025-06-18`. Pin it.     |
+| `RESOURCE_SCOPES`      | `todos.read mcp.access`        | **Both are required.** `mcp.access` alone is not enough.      |
+| `RESOURCE_URL`         | `https://api.resource.xaa.dev` | Still set — it's the Step 1 `resource` value. See `TODO(confirm)` below. |
+
+> **MCP mode introduces a fourth host.** The kit's other three
+> (`idp`, `auth.resource`, `api.resource`) are unchanged; `mcp.xaa.dev`
+> is additional and only exists on this path. The default MCP resource is
+> the playground's built-in **`todo0-mcp`** ("Todo0 MCP Server"), which
+> exposes **resources, not tools** — `todo0://todos`,
+> `todo0://todos/completed`, `todo0://todos/incomplete`. Override
+> `MCP_SERVER_URL` for BYOR-MCP.
+
+> `TODO(confirm)` — **what Step 1's `resource` should be in MCP mode.**
+> xaa.dev's docs say *"the MCP URL is not the audience — the resource URL
+> is"*, but `todo0-mcp`'s registered `resource_server_url` **is**
+> `https://mcp.xaa.dev/mcp`. Getting it wrong produces an `aud` mismatch
+> at Step 2 or a rejected token at the MCP server. Try
+> `RESOURCE_URL=https://api.resource.xaa.dev` first; if Step 2 succeeds
+> but the MCP server 401s with "Invalid or expired access token", try
+> `https://mcp.xaa.dev/mcp` and tell us which worked.
+
+> `TODO(confirm)` — the resource URI scheme. xaa.dev's docs say
+> `todo0://todos`; the IdP's resource catalog says `todo://todos`. Try
+> `todo0://` first.
 
 ---
 
@@ -47,10 +106,11 @@ These come from your registration at
 | `CLIENT_SECRET`           | Confidential secret for `CLIENT_ID`.                                    |
 | `RESOURCE_CLIENT_ID`      | OAuth client ID at the resource auth server. Derived as `{CLIENT_ID}-at-{resource_id}`. Used in Step 2. |
 | `RESOURCE_CLIENT_SECRET`  | Confidential secret for `RESOURCE_CLIENT_ID`.                           |
-| `RESOURCE_PATH`           | Path on the resource server to call. Default `/api/todos` for Todo0.    |
-| `RESOURCE_SCOPES`         | Space- or comma-separated scopes. Default `todos.read` for Todo0.       |
 | `APP_URL`                 | Public origin of your app. Locally: `http://localhost:3000`.            |
 | `SESSION_SECRET`          | ≥32-byte random string. Generate with `openssl rand -base64 32`.        |
+
+Resource-target vars (`RESOURCE_PATH`, `RESOURCE_SCOPES`,
+`MCP_SERVER_URL`, …) depend on `APP_TYPE` — see § Resource target above.
 
 ### OIDC path only
 
@@ -183,8 +243,9 @@ IDP_URL=https://idp.xaa.dev
 AUTH_SERVER_URL=https://auth.resource.xaa.dev
 RESOURCE_URL=https://api.resource.xaa.dev
 
-# === Protocol path (new in v3) ===
-XAA_PROTOCOL=oidc                 # oidc | saml
+# === The two axes (new in v3) ===
+XAA_PROTOCOL=oidc                 # oidc | saml        — how you log in
+APP_TYPE=standalone               # standalone | mcp   — what you do with the token
 
 # === Per-developer (set from xaa.dev/developer/register) ===
 # OAuth client at the IdP — login (Step 0), SAML exchange (Step 0b), token-exchange (Step 1)
@@ -195,9 +256,15 @@ CLIENT_SECRET=
 RESOURCE_CLIENT_ID=
 RESOURCE_CLIENT_SECRET=
 
-# Resource target (defaults below are Todo0; override for BYOR)
+# --- APP_TYPE=standalone only ---
 RESOURCE_PATH=/api/todos
 RESOURCE_SCOPES=todos.read
+
+# --- APP_TYPE=mcp only ---
+# Default is the playground's built-in todo0-mcp (resources, no tools).
+MCP_SERVER_URL=https://mcp.xaa.dev/mcp
+MCP_PROTOCOL_VERSION=2025-03-26
+# RESOURCE_SCOPES=todos.read mcp.access   # BOTH required in MCP mode
 
 # Local app
 APP_URL=http://localhost:3000

@@ -15,10 +15,16 @@ token is the session anchor.
 | -------------------------- | ------------------------------------ | ----------------------------------------------------------------------------- |
 | **IdP**                    | `https://idp.xaa.dev`                | Authenticates the user. Issues **Identity Assertions** (ID Token *or* SAML assertion) and refresh tokens. Mints **ID-JAG**s. |
 | **Resource auth server**   | `https://auth.resource.xaa.dev`      | Validates an ID-JAG. Mints resource **access tokens**.                        |
-| **Resource server**        | `https://api.resource.xaa.dev`       | Bearer-protected REST/MCP API.                                                |
+| **Resource server**        | `https://api.resource.xaa.dev`       | Bearer-protected REST API (Todo0). `APP_TYPE=standalone`.                     |
+| **MCP server**             | `https://mcp.xaa.dev/mcp`            | Bearer-protected MCP endpoint (`todo0-mcp`). **`APP_TYPE=mcp` only.**         |
 
 The IdP and the resource auth server are **separate** OAuth domains. Two
 client credential pairs are required — one registered at each.
+
+> **MCP mode adds a fourth host.** The first three are fixed for every
+> build. `mcp.xaa.dev` exists only when `APP_TYPE=mcp`, and it is a
+> *different origin* from the REST resource — not a path on it. There is
+> no MCP endpoint anywhere on `api.resource.xaa.dev`.
 
 ---
 
@@ -40,22 +46,31 @@ one throughout.
 
 ---
 
-## Choose your path
+## Choose your two paths
 
-Everything below branches exactly twice — at Step 0, and at Step 0b.
-From Step 1 onward both paths are **identical**.
+Two independent choices. `XAA_PROTOCOL` changes **how you log in**;
+`APP_TYPE` changes **what you do with the access token**. They branch in
+different places and never interact, so all four combinations are the
+same build with two swaps.
 
 ```
-OIDC path:  authorize(+offline_access) ──► ID Token + refresh token ─┐
-                                                                     │
-SAML path:  SAML SSO ──► assertion ──► [Step 0b] ──► refresh token ──┤
-                                                                     │
-            ┌────────────────────────────────────────────────────────┘
-            └─► [Step 1] ID-JAG ─► [Step 2] access token ─► [Step 3] resource
+  XAA_PROTOCOL ─────────┐                                  ┌───── APP_TYPE
+                        ▼                                  ▼
+OIDC:  authorize(+offline_access) ─► ID Token + refresh ─┐        ┌─► [3a] REST bearer fetch
+                                                         │        │
+SAML:  SSO ─► assertion ─► [0b] ─► refresh token ────────┤        │
+                                                         │        │
+       ┌─────────────────────────────────────────────────┘        │
+       └─► [1] ID-JAG ──► [2] access token ─────────────────────► ┤
+                                                                  │
+                                                                  └─► [3b] MCP via official SDK
 ```
 
-Pick OIDC unless you specifically need SAML. See `00-brief.md` § Choose
-your protocol path.
+Pick **OIDC** and **standalone** unless you have a reason not to. See
+`00-brief.md` § Choose your two paths.
+
+`APP_TYPE` touches Step 1 only as configuration — MCP mode needs
+`mcp.access` in the scope list — never as logic.
 
 > **Provenance.** The SAML details in this file are derived from
 > xaa.dev's live SAML metadata, its discovery fields, and its shipped
@@ -85,6 +100,45 @@ GET https://api.resource.xaa.dev/.well-known/oauth-protected-resource
 
 > `https://idp.xaa.dev/.well-known/oauth-authorization-server` returns
 > **404**. The IdP publishes OIDC discovery only.
+
+### MCP-mode discovery — and a trap
+
+> **`APP_TYPE=mcp` only.**
+
+The MCP server publishes RFC 9728 protected-resource metadata, but at a
+**path-suffixed** URL:
+
+```
+GET https://mcp.xaa.dev/.well-known/oauth-protected-resource/mcp
+    → {"resource":"https://mcp.xaa.dev/mcp",
+       "authorization_servers":["https://auth.resource.xaa.dev"]}
+```
+
+The **bare** `/.well-known/oauth-protected-resource` on that host
+**404s**. Don't construct the path — take it from the `WWW-Authenticate`
+header the server returns on an unauthenticated request:
+
+```
+WWW-Authenticate: Bearer resource_metadata="https://mcp.xaa.dev/.well-known/oauth-protected-resource/mcp"
+```
+
+> ⚠️ **Do not follow the discovery chain past that document.**
+> `https://mcp.xaa.dev/.well-known/oauth-authorization-server` exists but
+> **leaks unroutable internal hostnames**:
+> ```json
+> "token_endpoint": "http://authorization-server:5001/token"
+> "jwks_uri":       "http://authorization-server:5001/jwks"
+> ```
+> Plain `http://`, and a Docker-internal name that resolves nowhere. A
+> client doing textbook RFC 9728 → RFC 8414 discovery dies here.
+>
+> **Use the `authorization_servers` pointer to confirm the AS identity,
+> then fetch AS metadata from `https://auth.resource.xaa.dev` directly.**
+> The same leak appears in `api.resource.xaa.dev/api`.
+>
+> In practice this rarely bites, because the kit's token is already minted
+> before the MCP client connects — see § Step 3b. It bites hard if you let
+> the MCP SDK run its own OAuth.
 
 The fields you care about:
 
@@ -351,6 +405,25 @@ so that replacing the stored token if a response carries a new
 > by xaa.dev. The IdP encodes them into the ID-JAG so the auth server
 > can confirm the delegation target on Step 2.
 
+### What `scope` and `resource` are, per `APP_TYPE`
+
+The only place `APP_TYPE` reaches Step 1 — configuration values, not
+logic.
+
+| | `standalone` | `mcp` |
+| --- | --- | --- |
+| `scope` | `todos.read` | **`todos.read mcp.access`** — both required |
+| `resource` | `https://api.resource.xaa.dev` | `TODO(confirm)` — see below |
+| `audience` | `https://auth.resource.xaa.dev` | same |
+
+> `TODO(confirm)` — **`resource` in MCP mode.** xaa.dev's docs state *"the
+> MCP URL is not the audience — the resource URL is"*, yet `todo0-mcp`'s
+> registered `resource_server_url` **is** `https://mcp.xaa.dev/mcp`.
+> Try `https://api.resource.xaa.dev` first. If Step 2 succeeds but the MCP
+> server rejects the token with `"Unauthorized: Invalid or expired access
+> token"`, switch to `https://mcp.xaa.dev/mcp` — that asymmetry is the
+> tell. See `06-debugging-playbook.md` § D-21.
+
 > You *may* still pass an ID Token here
 > (`subject_token_type=urn:ietf:params:oauth:token-type:id_token`) — the
 > IdP accepts all three subject types. Don't: the ID Token is good for
@@ -472,7 +545,16 @@ Access token shape, for reference: header `typ: at+jwt` (RFC 9068),
 
 ---
 
-## Step 3 — protected resource fetch
+## Step 3 — use the access token
+
+**This is where `APP_TYPE` branches.** Both variants consume the *same*
+access token from Step 2; they differ only in what they talk to.
+
+---
+
+### ▸ Step 3a — standalone: REST bearer fetch
+
+> **`APP_TYPE=standalone`.**
 
 ```
 GET https://api.resource.xaa.dev${RESOURCE_PATH}     # default RESOURCE_PATH=/api/todos
@@ -488,6 +570,71 @@ Todo0 exposes five read endpoints — `/api/todos`,
 > endpoint exists and the IdP's resource catalog lists only `todos.read`
 > for `todo0`. Treat `todos.write` as advertised-but-unbacked; asking for
 > it is a good way to exercise `insufficient_scope`.
+
+---
+
+### ▸ Step 3b — MCP client: drive the server via the official SDK
+
+> **`APP_TYPE=mcp`.** Wire format below is for reference and debugging.
+> **Do not hand-roll it** — use the official MCP SDK. See
+> `04-protected-resource-call.md` § MCP client for the integration.
+
+```
+POST https://mcp.xaa.dev/mcp
+Authorization: Bearer <access_token from Step 2>
+Content-Type: application/json
+Accept: application/json, text/event-stream
+```
+
+| Property         | Value                                                     |
+| ---------------- | --------------------------------------------------------- |
+| Transport        | **StreamableHTTP** (JSON-RPC 2.0 over HTTP POST)          |
+| Protocol version | **`2025-03-26`** — pin it. Not `2025-06-18`.              |
+| Scopes           | `todos.read` **and** `mcp.access`                         |
+| Surface          | **Resources, not tools** (see below)                      |
+| Health           | `GET https://mcp.xaa.dev/health` — unauthenticated        |
+
+`Accept: application/json, text/event-stream` is **mandatory**; omitting
+it yields `406`. The SDK sets it for you — this matters only when you
+reproduce a call with curl.
+
+**`todo0-mcp` exposes resources, not tools:**
+
+| Resource URI                  | Contents               |
+| ----------------------------- | ---------------------- |
+| `todo0://todos`               | All todos              |
+| `todo0://todos/completed`     | Completed only         |
+| `todo0://todos/incomplete`    | Incomplete only        |
+
+So the demo call is `resources/list` then `resources/read` — **not**
+`tools/list` / `tools/call`, which return nothing here.
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"resources/read",
+ "params":{"uri":"todo0://todos"}}
+```
+
+> `TODO(confirm)` — the URI scheme. xaa.dev's docs say `todo0://todos`;
+> the IdP's resource catalog says `todo://todos`. Try `todo0://` first.
+> Also unconfirmed whether `tools/list` is genuinely empty.
+
+**The two-401 rule.** A `401` here is not the same failure as a `401`
+from Steps 1–2:
+
+| Where | Body / header | Means |
+| ----- | ------------- | ----- |
+| Steps 1–2 | OAuth error JSON (`invalid_grant`, …) | The token could not be **minted**. |
+| Step 3b | JSON-RPC envelope, `-32000`, `"Unauthorized: …"` + `WWW-Authenticate: Bearer resource_metadata=…` | The token was minted but the **MCP resource rejected it** — wrong `aud`, missing `mcp.access`, or expired. |
+
+Record which, via `upstream_step`. See `error-mapping.md`.
+
+---
+
+### Responses (both variants)
+
+Status codes below are the standalone REST shape; for MCP the SDK
+surfaces the equivalent as a transport error or a JSON-RPC error object,
+which `04` maps onto the same `ErrorCode` set.
 
 Possible responses:
 
@@ -557,3 +704,13 @@ seriously, not as a reason to skip logout.
 8. **Redact in logs** — see `error-mapping.md` § Token redaction. The
    `refresh_token` key already matches the redaction regex; confirm it
    does in your implementation.
+9. **The kit mints the token; the MCP SDK receives it.** *(`APP_TYPE=mcp`
+   only.)* MCP's own *acquisition* path — RFC 9728 discovery, Dynamic
+   Client Registration, auth-code + PKCE — is an *alternative* to XAA, not
+   a complement: the token already exists before the client connects.
+   Supply it through the SDK's **`authProvider` seam**, which is a
+   supported extension point designed for non-interactive flows, and leave
+   the acquisition members unimplemented. The SDK only reaches for its own
+   OAuth from a 401 handler, so on the happy path it never runs. Letting
+   it run would register a third client identity and walk into the
+   discovery leak above.

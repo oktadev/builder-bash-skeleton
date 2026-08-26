@@ -1,9 +1,13 @@
 # Error mapping — single source of truth
 
 The XAA flow can fail at five layers (login / SAML exchange /
-token-exchange / jwt-bearer / resource fetch). The UI needs **one stable
+token-exchange / jwt-bearer / resource use). The UI needs **one stable
 contract** so it can render distinct error states regardless of where the
 failure originated.
+
+The eight-code set below is the **same for both app types** — MCP
+failures map onto it rather than extending it, so the UI doesn't branch
+on `APP_TYPE`. See § MCP transport and JSON-RPC failures.
 
 ---
 
@@ -145,6 +149,43 @@ format, or a `sub_id` not authorized by local policy for the validated
 ID-JAG issuer. So a SAML tenant misconfiguration is indistinguishable
 from an expired refresh token by code alone — another reason to record
 `upstream_step` and the raw description.
+
+---
+
+## MCP transport and JSON-RPC failures
+
+> **`APP_TYPE=mcp` only.** The ErrorCode set does not grow — MCP failures
+> map onto the same eight codes so the UI contract is unchanged.
+
+The official MCP SDK surfaces failures two ways: as a **transport error**
+(HTTP-level, before JSON-RPC framing) and as a **JSON-RPC error object**
+inside a 200 response. Map both:
+
+| Origin | Signal | ErrorCode | `upstream_step` |
+| ------ | ------ | --------- | --------------- |
+| Transport | `401` + JSON-RPC `-32000` `"Unauthorized: No access token provided"` | `unauthorized` | `step3` |
+| Transport | `401` + `"Unauthorized: Invalid or expired access token"` | `invalid_token` — or `expired_token` if the description mentions expiry | `step3` |
+| Transport | `403` | `insufficient_scope` — most likely `mcp.access` missing from Step 1's `scope` | `step3` |
+| Transport | `406` | `resource_failure` — you omitted `Accept: application/json, text/event-stream`. A client bug, not a server fault. | `step3` |
+| Transport | `5xx`, DNS, TCP, TLS, timeout | `resource_failure` | `step3` |
+| JSON-RPC | `-32601` method not found | `resource_failure` — you called a method this server doesn't implement (e.g. `tools/list` on a resources-only server) | `step3` |
+| JSON-RPC | `-32602` invalid params | `resource_failure` — usually a bad resource `uri` | `step3` |
+| JSON-RPC | `-32600` / `-32700` | `resource_failure` — malformed request; suspect a hand-rolled call rather than the SDK | `step3` |
+| SDK | `initialize` rejected on protocol version | `resource_failure` — pin `2025-03-26` | `step3` |
+| SDK | attempts its own OAuth (discovery / DCR / redirect) | **not an error to map — a bug to fix.** See `06` § D-23. | — |
+
+**Two 401s, two meanings.** This parallels § The two faces of
+`expired_token` and is worth wiring the same way:
+
+| Where | Shape | Means |
+| ----- | ----- | ----- |
+| Steps 1–2 | OAuth error JSON (`invalid_grant`, `invalid_client`, …) | The token could not be **minted**. |
+| Step 3 (either app type) | `WWW-Authenticate` (standalone) or JSON-RPC `-32000` (MCP) | The token was minted, then **rejected by the resource**. |
+
+A minted-but-rejected token on the MCP path usually means one of: wrong
+`aud` (the Step 1 `resource` `TODO(confirm)`), `mcp.access` missing from
+scope, or genuine expiry. Those are three different fixes, so log the
+description verbatim.
 
 ---
 

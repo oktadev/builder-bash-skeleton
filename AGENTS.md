@@ -24,18 +24,21 @@ Read `hackathon-kit/IGNITION.md` end-to-end. It has the pre-flight
 checks, the two decisions below, the hard-gated execution loop, and the
 full invariant list.
 
-## Two decisions, in this order
+## Three decisions, in this order
 
-1. **Protocol path — OIDC or SAML.** Ask the dev *before* the stack
-   question. **OIDC is the default**; pick it unless they say otherwise.
-   Set `XAA_PROTOCOL` to match.
-2. **Stack.** Ask once, then commit for the session.
+1. **Protocol path — `XAA_PROTOCOL=oidc|saml`.** How the user logs in.
+   **OIDC is the default.**
+2. **Application type — `APP_TYPE=standalone|mcp`.** What the access
+   token is used for. **standalone is the default.**
+3. **Stack.** Ask once, then commit for the session.
 
-Never implement both paths. In the prompt files, `### ▸ OIDC path` /
-`### ▸ SAML path` are alternatives; `> **SAML path only.**` /
-`> **OIDC path only.**` blocks are skippable. Unmarked text applies to
-both. Don't read the other path's branches — it wastes context and
-invites mixing them.
+Ask 1 and 2 *before* the stack question — both affect it (SAML needs XML
+signature tooling; MCP needs the official SDK).
+
+Never implement both protocols or both app types. `### ▸ …` sections are
+alternatives; `> **… only.**` blocks are skippable when they aren't
+yours; unmarked text applies to everyone. Don't read the other branch —
+it wastes context and invites mixing them.
 
 ## The flow
 
@@ -43,11 +46,38 @@ invites mixing them.
 OIDC:  authorize(+offline_access) ──► ID Token + REFRESH TOKEN ─┐
 SAML:  SSO ─► assertion ─► [0b] ────► REFRESH TOKEN ────────────┤
                                                                 ▼
-       [1] refresh token → ID-JAG   [2] ID-JAG → access token   [3] Bearer call
+       [1] refresh token → ID-JAG   [2] ID-JAG → access token   [3] use it
                         └──── re-run 1+2 on every /api/call ────┘
+                                                                │
+                              standalone ─► REST Bearer fetch ──┤
+                              mcp        ─► official MCP SDK ───┘
 ```
 
-Steps 0/0b diverge by path. Everything from Step 1 on is identical.
+Two axes, disjoint:
+
+```
+                 Step 0 / 0b      Step 1        Step 2      Step 3
+  XAA_PROTOCOL   OIDC │ SAML      shared        shared      shared
+  APP_TYPE       shared           scopes only   shared      Standalone │ MCP
+```
+
+No combined `SAML+MCP` variant exists — it's the SAML Step 0 plus the MCP
+Step 3.
+
+## Kit vs official MCP SDK
+
+*(`APP_TYPE=mcp` only.)* Hold this line strictly:
+
+| Concern | Owner |
+| ------- | ----- |
+| Login, refresh token, ID-JAG, access token, session, config, redaction, error taxonomy, observability | **this kit** |
+| JSON-RPC framing, `initialize`, capability negotiation, transport, `resources/*`, `tools/*` | **official MCP SDK** (`@modelcontextprotocol/sdk`, or `mcp` for Python) |
+| MCP's own OAuth — RFC 9728 discovery, DCR, auth-code + PKCE | **neither, deliberately unused** |
+
+**The kit mints the token; the SDK receives it.** Never reimplement MCP
+protocol handling, and never let the SDK acquire its own token — it will
+register a third client identity and follow `mcp.xaa.dev`'s discovery
+document, which leaks unroutable internal hostnames.
 
 ## The four things agents get wrong
 
@@ -97,7 +127,8 @@ Three constants — never substitute, never templatise:
 | ---- | --------- |
 | `https://idp.xaa.dev` | `/.well-known/openid-configuration`. SAML metadata at `/saml/metadata`. **`oauth-authorization-server` 404s here.** |
 | `https://auth.resource.xaa.dev` | Use `/.well-known/oauth-authorization-server` — `openid-configuration` omits `authorization_grant_profiles_supported`. |
-| `https://api.resource.xaa.dev` | Resource (Todo0 default). |
+| `https://api.resource.xaa.dev` | REST resource (Todo0). `APP_TYPE=standalone`. |
+| `https://mcp.xaa.dev/mcp` | **Fourth host, `APP_TYPE=mcp` only.** StreamableHTTP, protocol `2025-03-26`, scopes `todos.read`+`mcp.access`, resources not tools. Its own `oauth-authorization-server` doc leaks unroutable internal hostnames — don't follow it. |
 
 Lifetimes: ID Token ~10 min, ID-JAG 5 min (30 s `iat` skew tolerance),
 access token ~2 h, refresh token **undocumented**. **No revocation

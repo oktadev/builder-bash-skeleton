@@ -28,6 +28,13 @@ apply to both.
 | **D-17**  | both       | No refresh token issued                  |
 | **D-18**  | both       | ID-JAG clock skew                        |
 | **D-19**  | both       | Re-auth loop / retry storm               |
+| **D-20**  | **MCP**    | MCP server 401s a token Step 2 accepted  |
+| **D-21**  | **MCP**    | `406`, or a hand-rolled JSON-RPC call    |
+| **D-22**  | **MCP**    | `initialize` fails / version mismatch    |
+| **D-23**  | **MCP**    | The SDK starts its own OAuth flow        |
+
+D-1 through D-19 are unaffected by `APP_TYPE`. D-20+ apply only when
+`APP_TYPE=mcp`.
 
 ---
 
@@ -626,6 +633,173 @@ step1 + invalid_grant  → requiresReauth: true; sign-in only, never retry
 > `expired_token`. It must distinguish `upstream_step === "step3"`
 > (re-mint, retry once, counter-bounded) from `"step1"` (refresh token
 > dead — set `requiresReauth`, offer sign-in, never retry).
+
+---
+## D-20 — MCP server 401s a token that Step 2 happily issued
+
+> **`APP_TYPE=mcp` only.** The single most likely MCP failure.
+
+### Symptom
+
+Steps 1 and 2 succeed — you hold an access token. The MCP server then
+returns:
+
+```
+HTTP 401
+www-authenticate: Bearer resource_metadata="https://mcp.xaa.dev/.well-known/oauth-protected-resource/mcp"
+{"jsonrpc":"2.0","error":{"code":-32000,"message":"Unauthorized: Invalid or expired access token"},"id":null}
+```
+
+The asymmetry is the diagnostic: **minted fine, rejected at use.**
+
+### Root cause
+
+Three candidates, most likely first:
+
+1. **`mcp.access` missing from Step 1's `scope`.** MCP mode needs
+   `todos.read` **and** `mcp.access`. A token with only `todos.read` mints
+   cleanly and is refused here.
+2. **Wrong `aud` — the Step 1 `resource` value.** This is the kit's open
+   `TODO(confirm)`: xaa.dev's docs say *"the MCP URL is not the audience —
+   the resource URL is"*, but `todo0-mcp`'s registered
+   `resource_server_url` is `https://mcp.xaa.dev/mcp`. If scope is right
+   and it still 401s, flip `RESOURCE_URL` between
+   `https://api.resource.xaa.dev` and `https://mcp.xaa.dev/mcp` and retry.
+3. **Genuine expiry.** Access tokens live ~2 h. If it worked an hour ago
+   and not now, re-mint (Steps 1+2) before assuming misconfiguration.
+
+### Debugging prompt
+
+> The MCP server rejects a token Step 2 issued. Decode the access token
+> payload and print `aud` and `scope`. Confirm `scope` contains both
+> `todos.read` and `mcp.access`. Then compare `aud` against both
+> `https://api.resource.xaa.dev` and `https://mcp.xaa.dev/mcp` and tell me
+> which one Step 1's `resource` produced — that's the `TODO(confirm)` in
+> `reference/xaa-spec.md` § Step 1.
+
+---
+
+## D-21 — `406`, or a JSON-RPC error that shouldn't happen
+
+> **`APP_TYPE=mcp` only.**
+
+### Symptom
+
+Either an HTTP `406` with no useful body, or a JSON-RPC error in the
+`-32600` / `-32700` / `-32602` family.
+
+### Root cause
+
+- **`406`** — the request omitted
+  `Accept: application/json, text/event-stream`. The server requires both
+  media types.
+- **`-32700` parse / `-32600` invalid request** — malformed JSON-RPC.
+- **`-32602` invalid params** — usually a bad resource `uri`. Note the
+  kit's open `TODO(confirm)`: docs say `todo0://todos`, the IdP catalog
+  says `todo://todos`.
+- **`-32601` method not found** — you called something this server
+  doesn't implement. `todo0-mcp` is **resources-only**: `tools/list` and
+  `tools/call` are the usual culprits.
+
+**If you are seeing `406` or a framing error at all, that is itself the
+finding:** the official SDK sets the `Accept` header and frames JSON-RPC
+correctly. Getting these means you're constructing requests by hand
+somewhere — which is the boundary violation, not just a bug.
+
+### Debugging prompt
+
+> I'm getting <406 | a JSON-RPC framing error> from the MCP server. Show
+> me every place my code builds an MCP request. All of it should go
+> through the official SDK's client — if I'm calling `fetch` against
+> `MCP_SERVER_URL` directly, replace it with the SDK. Then confirm I'm
+> calling `resources/*`, not `tools/*`, since `todo0-mcp` exposes no
+> tools.
+
+---
+
+## D-22 — `initialize` fails or negotiates the wrong version
+
+> **`APP_TYPE=mcp` only.**
+
+### Symptom
+
+The client connects but `initialize` errors, or the session behaves oddly
+afterwards — methods missing, capabilities absent.
+
+### Root cause
+
+Protocol-version mismatch. The xaa.dev playground speaks **`2025-03-26`**
+and hardcodes it. An SDK defaulting to a newer revision may fail
+negotiation or negotiate down into a shape you didn't expect.
+
+### Resolution
+
+Pin `MCP_PROTOCOL_VERSION=2025-03-26` and pass it explicitly rather than
+relying on the SDK default. Then log the version the server actually
+returned in `InitializeResult` — negotiate, but assert the outcome.
+
+### Debugging prompt
+
+> `initialize` against the MCP server is failing or negotiating an
+> unexpected protocol version. Pin the client to `2025-03-26` from
+> `MCP_PROTOCOL_VERSION`, then log the version and capabilities returned
+> in `InitializeResult` so I can see what was actually agreed.
+
+---
+
+## D-23 — The SDK starts its own OAuth flow
+
+> **`APP_TYPE=mcp` only. This is an architecture bug, not a config bug.**
+
+### Symptom
+
+Any of:
+
+- Logs show a request to `/.well-known/oauth-protected-resource` or
+  `/.well-known/oauth-authorization-server` that your code never made.
+- A Dynamic Client Registration `POST` to a `/reg` endpoint.
+- A redirect-to-authorization attempt, or an `UnauthorizedError` thrown
+  from the transport on 401.
+- A connection failure naming `http://authorization-server:5001`.
+
+That last one is unmistakeable: it's an **unroutable internal Docker
+hostname** leaked by `mcp.xaa.dev`'s own authorization-server metadata.
+You only ever reach it by following the discovery chain — which means the
+SDK is trying to acquire a token.
+
+### Root cause
+
+MCP's built-in authorization (RFC 9728 discovery → DCR → auth-code +
+PKCE) is a **competing** token-acquisition path to XAA. In this kit the
+token already exists before the client connects, so you supply it through
+the SDK's `authProvider` seam and leave the acquisition members
+unimplemented. The SDK reaches for its own OAuth only from a 401 handler —
+so if you're seeing discovery traffic, either a 401 occurred (fix that,
+see D-20) or the provider was wired to permit acquisition. Letting it run
+also registers a third client identity alongside `CLIENT_*` and
+`RESOURCE_CLIENT_*`.
+
+### Resolution
+
+Supply the XAA-minted access token to the transport, and make sure no
+code path lets the SDK go looking for one. See
+`04-protected-resource-call.md` § MCP client for the mechanism in your
+SDK.
+
+On a 401 the correct behaviour is to surface it via the kit's error
+mapping (D-20) — **not** to hand control to the SDK's OAuth. A 401 here
+means the token was rejected, and acquiring a different token via a
+different flow would paper over a real misconfiguration.
+
+### Debugging prompt
+
+> My MCP client is attempting its own OAuth — I can see
+> <discovery request | DCR POST | redirect | authorization-server:5001>
+> in the logs. The access token is already minted by the XAA flow before
+> the client connects. Show me how the token reaches the transport, and
+> remove or disable whatever lets the SDK attempt its own acquisition. A
+> 401 should surface through the kit's error mapping, not trigger an OAuth
+> flow.
 
 ---
 

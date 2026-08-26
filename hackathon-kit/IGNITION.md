@@ -60,9 +60,12 @@ attempt to fix it yourself.
    `README.md` (language runtime, `openssl`, `curl`, free port). Report
    any gaps; stop if fundamentals are missing.
 
-## 2. Protocol decision (ask me first)
+## 2. Two decisions (ask me both before anything else)
 
-**Ask me this before anything else, including the stack question:**
+Ask both of these before the stack question. They're independent, and
+each is one short question.
+
+**2a — protocol path:**
 
 > "Which XAA protocol path — **OIDC** or **SAML**?
 >
@@ -76,21 +79,61 @@ attempt to fix it yourself.
 >
 > If you have no constraint, say OIDC."
 
-This decision determines what Step 0 looks like, which env vars matter,
-and whether Step 0b runs at all. **Everything from Step 1 onward is
-identical on both paths** — so this is one fork, not two builds.
+**2b — application type:**
 
-Set `XAA_PROTOCOL` in `.env.local` to match, and **commit to that path
-for the rest of the session.**
+> "Which application type — **standalone** or **MCP client**?
+>
+> - **standalone** (default): the app calls a protected REST resource
+>   itself with `Authorization: Bearer`. Nothing beyond the kit.
+> - **MCP client**: the app drives an MCP server using the
+>   **official MCP SDK**, authenticating with the same XAA-minted token.
+>   Adds one dependency and a fourth host. Pick this if you're building
+>   an agent-facing client.
+>
+> If you have no constraint, say standalone."
 
-When you read the kit's prompt files, sections are marked:
+Set `XAA_PROTOCOL` and `APP_TYPE` in `.env.local` to match, and **commit
+to both for the rest of the session.**
+
+### Why this is two forks and not four builds
+
+The axes touch different parts of the flow and never interact:
+
+```
+                 Step 0 / 0b      Step 1        Step 2      Step 3
+  XAA_PROTOCOL   OIDC │ SAML      shared        shared      shared
+  APP_TYPE       shared           scopes only   shared      Standalone │ MCP
+```
+
+`XAA_PROTOCOL` changes how the refresh token is obtained. `APP_TYPE`
+changes what the access token is used for. There is no combined
+`SAML + MCP` variant to learn — it's the SAML Step 0 plus the MCP Step 3.
+
+### The division of labour in MCP mode
+
+If I pick MCP, hold this line strictly:
+
+| Concern | Owner |
+| ------- | ----- |
+| Login, refresh token, ID-JAG, access token, session, config, redaction, error taxonomy | **this kit** |
+| JSON-RPC framing, `initialize`, capability negotiation, transport, `resources/*`, `tools/*` | **official MCP SDK** |
+| MCP's own OAuth (RFC 9728 discovery, DCR, auth-code + PKCE) | **neither — deliberately unused** |
+
+**The kit mints the token; the SDK receives it.** Do not reimplement MCP
+protocol handling, and do not let the SDK acquire its own token — see
+§ 6 and `reference/xaa-spec.md` § Step 3b.
+
+### Branch markers
+
 - `### ▸ OIDC path` / `### ▸ SAML path` — do the one that matches.
-- `> **SAML path only.**` / `> **OIDC path only.**` — skip if it isn't
-  yours.
-- Unmarked text applies to both.
+- `### ▸ Step 3a — standalone` / `### ▸ Step 3b — MCP client` — likewise.
+- `> **SAML path only.**` / `> **APP_TYPE=mcp only.**` etc. — skip if it
+  isn't yours.
+- Unmarked text applies to everyone.
 
-Do not implement both paths. Do not read the other path's branches to
-"be thorough" — it wastes context and invites mixing them.
+Do not implement both protocol paths or both app types. Do not read the
+other branch to "be thorough" — it wastes context and invites mixing
+them.
 
 ## 3. Stack decision (ask me once)
 
@@ -99,9 +142,14 @@ Show me the root `README.md` § Quick stack picker. Ask me:
 > "Which row from the stack picker should I use? (Or specify a custom
 > combination.)"
 
-If I chose SAML in Step 2, also confirm the SAML library for that
-stack — the picker has a column for it. Signature verification on a
-SAML assertion is not something to hand-roll.
+If I chose SAML in § 2a, also confirm the SAML library for that stack —
+the picker has a column for it. Signature verification on a SAML
+assertion is not something to hand-roll.
+
+If I chose MCP in § 2b, the MCP SDK is **not** a free choice: use the
+official one for the language (`@modelcontextprotocol/sdk` for
+Node/TS, `mcp` for Python). Don't substitute a community client and
+don't write your own JSON-RPC layer.
 
 After I answer, **commit to that stack for the rest of the session**.
 Do not silently switch frameworks mid-build, even if a different one
@@ -180,6 +228,11 @@ These four are repeated because they're where agents actually drift:
 4. **The two client pairs aren't interchangeable.** `CLIENT_*` at the IdP
    (Steps 0, 0b, 1); `RESOURCE_CLIENT_*` at the resource auth server
    (Step 2). Most common cause of opaque `invalid_client`.
+5. *(MCP only)* **Inject the token into the SDK; never let the SDK
+   acquire one.** MCP's built-in OAuth is a competing token source. If
+   you see the SDK attempt discovery, DCR, or a redirect, that's the
+   drift — it will also walk into `mcp.xaa.dev`'s discovery document,
+   which leaks unroutable internal hostnames.
 
 ## 7. Done state
 

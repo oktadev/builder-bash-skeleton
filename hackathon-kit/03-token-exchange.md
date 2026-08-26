@@ -23,6 +23,16 @@
 > - `resource=https://api.resource.xaa.dev`  (or your BYOR resource URL)
 > - `scope=<space-separated requested scopes>`
 >
+> **`scope` and `resource` depend on `APP_TYPE`** — this is the only place
+> the app-type axis reaches this step, and it's configuration, not logic:
+>
+> | | `standalone` | `mcp` |
+> | --- | --- | --- |
+> | `scope` | `todos.read` | **`todos.read mcp.access`** — both required |
+> | `resource` | `https://api.resource.xaa.dev` | `TODO(confirm)` — try the same value first; see `reference/xaa-spec.md` § Step 1 |
+>
+> Everything else on this page is identical for both app types.
+>
 > Return value: the response's `access_token` field carries the
 > **ID-JAG** (a signed delegation assertion). Treat as opaque. Validate
 > `issued_token_type` is `…token-type:id-jag`.

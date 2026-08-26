@@ -16,7 +16,12 @@ done OAuth/OIDC before, skim. If not, read once before starting.
 - **Resource auth server** — `https://auth.resource.xaa.dev`. Validates
   an ID-JAG and mints resource access tokens.
 - **Resource server** — `https://api.resource.xaa.dev` (default Todo0).
-  The bearer-protected API your app calls.
+  The bearer-protected REST API your app calls when
+  `APP_TYPE=standalone`.
+- **MCP server** — `https://mcp.xaa.dev/mcp` (default `todo0-mcp`). The
+  bearer-protected MCP endpoint your app drives when `APP_TYPE=mcp`. A
+  **fourth host**, a separate origin from the REST resource — there is no
+  MCP endpoint on `api.resource.xaa.dev`.
 - **OAuth client** — a registered identity at an authorization domain.
   This kit uses **two** clients per developer: one at the IdP
   (`CLIENT_*`), one at the resource auth server (`RESOURCE_CLIENT_*`).
@@ -151,6 +156,44 @@ above — same jobs, different mechanisms.
 - **SAML IdP metadata** — `https://idp.xaa.dev/saml/metadata`. The XML
   document carrying the IdP's entityID, signing certificate, and
   endpoint bindings. **The analogue of OIDC discovery.**
+
+---
+
+## MCP machinery
+
+*`APP_TYPE=mcp` only.* **The official MCP SDK owns every term in this
+section** — they're here so you can read logs and error messages, not so
+you can implement them. If you find yourself writing code that constructs
+any of these by hand, you've crossed the boundary.
+
+- **MCP (Model Context Protocol)** — the protocol an agent-facing client
+  uses to consume resources, tools and prompts from a server. JSON-RPC
+  2.0 over a transport.
+- **Official MCP SDK** — `@modelcontextprotocol/sdk` (Node/TS) or `mcp`
+  (Python). The kit integrates with it; it does not reimplement it.
+- **StreamableHTTP** — the current HTTP transport: JSON-RPC over HTTP
+  POST. What `mcp.xaa.dev/mcp` speaks. *SDK-owned.*
+- **`initialize`** — the opening handshake that negotiates protocol
+  version and capabilities, followed by a `notifications/initialized`.
+  *SDK-owned.*
+- **Protocol version** — a dated string, e.g. **`2025-03-26`**, which is
+  what the xaa.dev playground speaks. Pin it; don't assume a newer one.
+- **Resource (MCP sense)** — a readable item the server exposes, addressed
+  by a URI like `todo0://todos`. Listed with `resources/list`, fetched
+  with `resources/read`. **Not** the same word as the kit's "resource
+  server" — see the warning below.
+- **Tool** — a callable function a server exposes (`tools/list`,
+  `tools/call`). `todo0-mcp` exposes **none**; it is resources-only.
+- **RFC 9728 protected-resource metadata** — how an MCP server advertises
+  its authorization server. On `mcp.xaa.dev` it lives at the
+  **path-suffixed** `/.well-known/oauth-protected-resource/mcp`; the bare
+  path 404s. Read it from the `WWW-Authenticate` header.
+
+> ⚠️ **"Resource" means two different things in this kit.** The XAA sense
+> is *the protected API you're reaching* (RFC 8707 `resource` parameter,
+> the `aud` of your access token). The MCP sense is *one readable item
+> inside an MCP server* (`todo0://todos`). They are unrelated. When the
+> kit says `resource=` it always means the XAA sense.
 
 ---
 

@@ -79,10 +79,19 @@ Required rows — the ones that catch real regressions:
 | T6.3  | both  | refresh semantics    | Step 1 `invalid_grant`                      | `expired_token` + `requiresReauth: true`, and **no retry attempted** |
 | T6.4  | both  | refresh semantics    | Step 3 expired twice in a row               | `expired_token`; **exactly two** rounds, no third — retry is bounded |
 | T7.1  | SAML  | ID-JAG claims        | Payload with `sub_id`, no `sub`             | Subject resolves from `sub_id.nameid` without throwing |
+| T8.1  | mcp   | Step 1 scopes        | Built request in MCP mode                   | `scope` contains **both** `todos.read` and `mcp.access` |
+| T8.2  | mcp   | token injection      | MCP client construction                     | The transport is given the Step-2 access token; **no** discovery, DCR, or redirect is attempted (assert on the stubbed HTTP client: only `MCP_SERVER_URL` is called) |
+| T8.3  | mcp   | protocol version     | `initialize`                                | Client sends `2025-03-26` from `MCP_PROTOCOL_VERSION`, not an SDK default |
+| T8.4  | mcp   | transport 401        | JSON-RPC `-32000` "Invalid or expired access token" | `invalid_token` (or `expired_token` if the description says expired), `upstream_step: "step3"` — **not** an OAuth flow |
+| T8.5  | mcp   | JSON-RPC `-32601`    | Method not found                            | `resource_failure`, `upstream_step: "step3"` |
 
-**About 18 rows on an OIDC build, 22 on SAML.** Implementations may merge
-or split them; what matters is that each row's behaviour is asserted
-somewhere.
+**About 18 rows on an OIDC + standalone build; 22 on SAML; +5 on MCP.**
+Implementations may merge or split them; what matters is that each row's
+behaviour is asserted somewhere.
+
+**T8.2 is the MCP equivalent of T6.2** — it's the row that catches the
+architecture going wrong rather than the code. A build that lets the SDK
+run its own OAuth will still pass every other MCP row.
 
 **T6.2 is the one that matters most.** A build still anchored on the ID
 Token passes nearly every other row and fails this one.
@@ -120,6 +129,7 @@ responses:
 | `DELETE /api/logs`                  | both | 200 `{"ok":true}`                                  |
 | `GET /api/auth/login`               | OIDC | 30x → `https://idp.xaa.dev/authorize?...` with PKCE+state+nonce **and `offline_access` in scope** |
 | `GET /api/auth/login`               | SAML | 30x → `https://idp.xaa.dev/saml/sso?...` with `SAMLRequest`+`RelayState`, **or** 200 with a self-POSTing form to that endpoint |
+| `GET https://mcp.xaa.dev/health`    | mcp  | 200 `{"status":"healthy",…}` — confirms the fourth host is reachable before you debug your own client |
 
 Nine probes on either path. The `offline_access` assertion on the OIDC
 login probe is worth scripting explicitly:
@@ -233,6 +243,27 @@ as the `subject_token` on Step 1 — it should be the refresh token.
 Step 9 matters: the refresh path is identical on both protocols, so a
 SAML build must not re-do SSO or Step 0b to get a new ID-JAG. If it
 does, the refresh token isn't being used as the anchor.
+
+### E8 — MCP end-to-end (new in v3, `APP_TYPE=mcp` only)
+
+| # | Action                                                        | Expected                                                                 |
+| - | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 1 | Confirm the MCP server is up: `curl -sS https://mcp.xaa.dev/health` | `{"status":"healthy","service":"mcp-server",…}` — unauthenticated. |
+| 2 | Confirm it rejects anonymous access: `curl -sS -i -X POST https://mcp.xaa.dev/mcp` | `401` + a JSON-RPC `-32000` envelope + `WWW-Authenticate: Bearer resource_metadata=…` |
+| 3 | Log in, then call the protected resource.                      | 200-equivalent: `initialize` succeeds.                                   |
+| 4 | Inspect the log for the negotiated version.                    | **`2025-03-26`** — from `MCP_PROTOCOL_VERSION`, not an SDK default.       |
+| 5 | Inspect `resources/list`.                                      | `todo0://todos`, `todo0://todos/completed`, `todo0://todos/incomplete`.   |
+| 6 | Inspect `resources/read` on `todo0://todos`.                   | Contents render in the resource viewer.                                  |
+| 7 | **Grep the whole request log for discovery traffic.**          | **No** request to any `/.well-known/…`, no DCR `POST`, no redirect, and nothing addressed to `authorization-server:5001`. Only `MCP_SERVER_URL`. |
+| 8 | Drop `mcp.access` from `RESOURCE_SCOPES`, restart, call again.  | Step 2 still succeeds; the MCP server now 401s. UI shows `invalid_token` / `insufficient_scope` with `upstream_step: "step3"` — **not** a login redirect. Restore the scope afterwards. |
+| 9 | Run E6 on this path.                                           | Refresh works identically. `initialize` re-runs per call; **login does not.** |
+
+**Step 7 is the one that matters.** It's the only check that proves the
+architecture — that the kit minted the token and the SDK merely used it.
+Everything else can pass while the SDK quietly runs its own OAuth.
+
+Step 8 is worth doing once: it's the fastest way to see the two-401
+distinction in practice, and it's the failure most MCP builds hit first.
 
 ## Output (capabilities, not files)
 

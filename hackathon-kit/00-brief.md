@@ -13,27 +13,57 @@ stack you're fastest in (Python / Go / Rust / Java / Ruby / Node / .NET
 / Elixir / etc.) — the prompts that follow describe behaviour and wire
 format, not libraries.
 
-## Choose your protocol path
+## Choose your two paths
 
-**Answer this before writing anything.**
+**Answer both before writing anything.** They're independent.
 
-| Path              | What Step 0 looks like                                        | Pick it when                                                             |
-| ----------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+### 1. Protocol — how you log in (`XAA_PROTOCOL`)
+
+| Path                 | What Step 0 looks like                                        | Pick it when                                                             |
+| -------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | **OIDC** *(default)* | Authorization Code + PKCE at `https://idp.xaa.dev/authorize`. Returns an ID Token **and** a refresh token. | You have no constraint. Fewer moving parts, and the path xaa.dev's own docs cover. |
-| **SAML**          | SP-initiated SAML 2.0 Web Browser SSO at `https://idp.xaa.dev/saml/sso`, then one extra exchange (**Step 0b**) trading the assertion for a refresh token. | You're modelling an app whose IdP integration is already SAML, or you want to exercise the SAML path deliberately. |
+| **SAML**             | SP-initiated SAML 2.0 Web Browser SSO at `https://idp.xaa.dev/saml/sso`, then one extra exchange (**Step 0b**) trading the assertion for a refresh token. | You're modelling an app whose IdP integration is already SAML, or you want to exercise the SAML path deliberately. |
 
-**If you have no existing constraint, pick OIDC.**
+### 2. Application type — what you do with the token (`APP_TYPE`)
 
-The two paths diverge only at Step 0 and Step 0b. **From Step 1 onward
-they are byte-identical** — same grants, same URNs, same error handling.
-This is one fork near the beginning, not two builds.
+| Type                       | What Step 3 looks like                                                                 | Pick it when                                              |
+| -------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| **standalone** *(default)* | Your app calls a protected REST resource itself: `GET …/api/todos` with `Authorization: Bearer`. | You're building a conventional web app or service.        |
+| **MCP client**             | Your app drives an MCP server through the **official MCP SDK**, authenticated with the same XAA-minted token. Adds one dependency and a fourth host (`mcp.xaa.dev`). | You're building an agent-facing client that consumes MCP resources or tools. |
 
-Set `XAA_PROTOCOL=oidc` or `XAA_PROTOCOL=saml` in `.env.local` and
-commit to it. In the prompt files, sections marked `### ▸ OIDC path` /
-`### ▸ SAML path` are yours to choose between; blocks marked
-`> **SAML path only.**` or `> **OIDC path only.**` are skippable if
-they aren't your path. Unmarked text applies to both. **Do not
-implement both.**
+**No constraint? Pick OIDC + standalone.**
+
+### Why this is two forks, not four builds
+
+```
+                 Step 0 / 0b      Step 1        Step 2      Step 3
+  XAA_PROTOCOL   OIDC │ SAML      shared        shared      shared
+  APP_TYPE       shared           scopes only   shared      Standalone │ MCP
+```
+
+The axes touch different parts of the flow and never interact. There is
+no combined "SAML + MCP" variant to learn — it's the SAML Step 0 plus the
+MCP Step 3. `APP_TYPE` reaches Step 1 only as configuration (MCP needs
+`mcp.access` in the scope list), never as logic.
+
+Set both in `.env.local` and commit to them. In the prompt files,
+`### ▸ …` sections are alternatives and `> **… only.**` blocks are
+skippable when they aren't yours; unmarked text applies to everyone.
+**Do not implement both protocols or both app types.**
+
+### Where the kit ends and the MCP SDK begins
+
+If you picked MCP, this boundary is the point of the design:
+
+| Concern | Owner |
+| ------- | ----- |
+| Login, refresh token, ID-JAG, access token, session, config, redaction, error taxonomy, observability | **this kit** |
+| JSON-RPC framing, `initialize`, capability negotiation, transport, `resources/*`, `tools/*` | **official MCP SDK** |
+| MCP's own OAuth — RFC 9728 discovery, DCR, auth-code + PKCE | **neither, deliberately** |
+
+**The kit mints the token; the SDK receives it.** Don't reimplement MCP
+protocol handling in your app, and don't let the SDK acquire its own
+token — in this architecture it already has one.
 
 ---
 
@@ -58,8 +88,14 @@ implement both.**
      (`refresh token → ID-JAG`).
    - **RFC 7523** JWT-Bearer Grant at the resource auth server
      (`ID-JAG → access token`).
-4. **Call a protected resource** with `Authorization: Bearer <access
-   token>` and render the response.
+4. **Use the access token**, per `APP_TYPE`:
+   - **▸ standalone:** `GET https://api.resource.xaa.dev${RESOURCE_PATH}`
+     with `Authorization: Bearer <access token>`, and render the response.
+   - **▸ MCP client:** connect the **official MCP SDK** to
+     `https://mcp.xaa.dev/mcp` (StreamableHTTP, protocol `2025-03-26`),
+     supplying that same access token; then `resources/list` and
+     `resources/read` on `todo0://todos`. The playground's `todo0-mcp`
+     exposes **resources, not tools**.
 5. **Handle the failure modes** with distinct UX: successful,
    unauthorized, invalid token, expired token, API failure — plus a
    dead refresh token, which is a *re-authenticate*, not a retry.

@@ -38,10 +38,17 @@
 >
 > On click → `POST /api/call`. While the request is in-flight, show a
 > loading state. On success, render:
-> - HTTP status, duration in ms.
-> - The response body pretty-printed (JSON viewer or `<pre>`).
+> - Duration in ms.
 > - Token chips: ID-JAG and access token both as `head…tail`. Scopes as
 >   small badges.
+> - Then the payload, per `APP_TYPE` — same component, different shape:
+>   - **▸ standalone:** HTTP status plus the response body pretty-printed
+>     (JSON viewer or `<pre>`).
+>   - **▸ mcp:** the protocol version and server name negotiated by
+>     `initialize`, the URIs from `resources/list`, and the contents from
+>     `resources/read` pretty-printed. There is no HTTP status to show —
+>     a successful MCP call is a JSON-RPC result, so surface
+>     "connected · N resources" rather than "200".
 >
 > On failure, render *one of seven* alerts keyed by `ApiError.error`
 > per `reference/error-mapping.md` § ErrorCode set. Each alert shows a
@@ -166,6 +173,9 @@ End-to-end visual check (E1):
 4. Switch to `/logs`. Confirm the lifecycle is recorded:
    `auth → token-exchange → jwt-bearer → resource-call`. On the SAML
    path an earlier `saml` + `token-exchange (step=0b)` pair precedes it.
+   On `APP_TYPE=mcp` the last entry is an `mcp` group instead —
+   `initialize → resources/list → resources/read` — and the negotiated
+   protocol version should read `2025-03-26`.
 5. **Click "Call protected resource" a second time.** Confirm it
    succeeds with `token-exchange → jwt-bearer → resource-call` again and
    **no new `auth` line** — the refresh token was reused. This is the E6
