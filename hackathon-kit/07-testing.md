@@ -52,61 +52,56 @@ user-facing scenarios produce distinct outcomes.
 
 ## Required hermetic test cases
 
+Required rows — the ones that catch real regressions:
+
 | ID    | Path  | Surface              | Case                                        | Expected                                 |
 | ----- | ----- | -------------------- | ------------------------------------------- | ---------------------------------------- |
-| T1.1  | both  | config               | All env vars set                            | `loadConfig()` returns full config       |
-| T1.2  | both  | config               | One required var missing                    | Throws with the missing var's name       |
-| T1.3  | both  | config               | Scope list with whitespace + empties        | Returns trimmed, non-empty entries       |
-| T1.4  | both  | config               | `XAA_PROTOCOL=oidc` without `SAML_ACS_URL`  | **Valid** — SAML vars not required on the OIDC path |
-| T1.5  | both  | config               | `XAA_PROTOCOL=saml` without `SAML_ACS_URL`  | Throws naming `SAML_ACS_URL`             |
-| T1.6  | both  | config               | `XAA_PROTOCOL` unset                        | Defaults to `oidc`                       |
-| T2.1  | both  | logger               | Long token redaction                        | `head…tail` shape                        |
-| T2.2  | both  | logger               | Short token (≤16 chars)                     | `***`                                    |
-| T2.3  | both  | logger               | `null`/`undefined` token                    | `undefined` literal                      |
-| T2.4  | both  | logger               | Key regex covers `token/secret/assertion/jag/jwt` | All redacted; non-matching keys preserved |
-| T2.5  | both  | logger               | Buffer cap                                  | 200 entries; FIFO eviction               |
-| T2.6  | both  | logger               | `refresh_token` key                         | **Redacted** (matches on `token`)        |
-| T2.7  | SAML  | logger               | `SAMLResponse` key                          | **Redacted** — does *not* match the default regex, so must be handled explicitly |
-| T2.8  | SAML  | logger               | `sub_id` object                             | **Not** redacted — it's the key SAML diagnostic |
-| T3.1  | OIDC  | login URL builder    | Authorize URL                               | Contains `client_id`, `redirect_uri`, `code_challenge_method=S256`, `state`, `nonce`, base64url challenge |
-| T3.2  | OIDC  | login URL builder    | Scope                                       | **Contains `offline_access`**            |
-| T3.3  | SAML  | AuthnRequest builder | Request                                     | Carries `RelayState`; records the request `ID`; NameID format is **not** `transient` |
-| T3.4  | SAML  | assertion encoder    | Bare `<saml:Assertion>` in                  | base64url out, **no `=` padding**, no `+` or `/` |
-| T3.5  | SAML  | assertion extractor  | Full `SAMLResponse` in                      | Returns only the `<saml:Assertion>` element |
-| T3.6  | SAML  | Step 0b request      | Built request                               | `subject_token_type=…saml2`, `requested_token_type=…refresh_token`, scope includes `offline_access` |
-| T4.1  | both  | token-exchange       | Step 1 happy path                           | Hits IdP `/token`; `subject_token_type=…refresh_token`, `requested_token_type=…id-jag`, refresh token in `subject_token`, audience, resource, scope all present |
+| T1.1  | both  | config               | One required var missing                    | Throws with the missing var's name        |
+| T1.2  | both  | config               | Required set follows `XAA_PROTOCOL`         | OIDC build doesn't demand `SAML_ACS_URL`, and vice versa |
+| T2.1  | both  | logger               | Long / short / null token redaction         | `head…tail` / `***` / `undefined`         |
+| T2.2  | both  | logger               | Key regex `token/secret/assertion/jag/jwt`  | All redacted (incl. `refresh_token`); non-matching keys preserved |
+| T2.3  | SAML  | logger               | `SAMLResponse` and `sub_id`                 | `SAMLResponse` redacted (it does **not** match the regex); `sub_id` **not** redacted |
+| T3.1  | OIDC  | login URL builder    | Authorize URL                               | `client_id`, `redirect_uri`, `code_challenge_method=S256`, `state`, `nonce`, base64url challenge — **and `offline_access` in scope** |
+| T3.2  | SAML  | AuthnRequest builder | Request                                     | Carries `RelayState`; records the request `ID`; NameID format is **not** `transient` |
+| T3.3  | SAML  | assertion handling   | Full `SAMLResponse` in                      | Extracts the bare `<saml:Assertion>`; encodes base64url with **no `=` padding**, no `+` or `/` |
+| T3.4  | SAML  | Step 0b request      | Built request                               | `subject_token_type=…saml2`, `requested_token_type=…refresh_token`, scope includes `offline_access` |
+| T4.1  | both  | token-exchange       | Step 1 happy path                           | Hits IdP `/token`; `subject_token_type=…refresh_token`, `requested_token_type=…id-jag`, refresh token in `subject_token`, audience + resource + scope present |
 | T4.2  | both  | token-exchange       | Step 2 happy path                           | Hits auth server `token_endpoint`; `grant_type=…jwt-bearer`, ID-JAG in `assertion`, credentials **in form body** |
-| T4.3  | both  | token-exchange       | IdP `invalid_grant` on Step 1               | Throws tagged `upstream_step: "step1"`   |
-| T4.4  | both  | token-exchange       | Auth server `invalid_grant` on Step 2       | Throws tagged `upstream_step: "step2"`   |
-| T4.5  | both  | token-exchange       | Two credential pairs                        | Step 1 uses `CLIENT_*`, Step 2 uses `RESOURCE_CLIENT_*` |
-| T4.6  | both  | token-exchange       | Discovery URL for the auth server           | Requests `oauth-authorization-server`, **not** `openid-configuration` |
-| T4.7  | both  | token-exchange       | `issued_token_type` validation              | Rejects a Step 1 response whose `issued_token_type` isn't `…id-jag` |
+| T4.3  | both  | token-exchange       | `invalid_grant` on Step 1 vs Step 2         | Tagged `upstream_step: "step1"` / `"step2"` respectively |
+| T4.4  | both  | token-exchange       | Two credential pairs                        | Step 1 uses `CLIENT_*`, Step 2 uses `RESOURCE_CLIENT_*` |
 | T5.1  | both  | resource-call        | 200 with body                               | `ok: true`, body propagated              |
 | T5.2  | both  | resource-call        | 401 `invalid_token` desc=expired, retry OK  | `ok: true`; **exactly two** Step-1/2 rounds |
-| T5.3  | both  | resource-call        | 401 `invalid_token` desc=signature          | `invalid_token`                          |
-| T5.4  | both  | resource-call        | 401 generic (no `error=`)                   | `unauthorized`                           |
-| T5.5  | both  | resource-call        | 403 `insufficient_scope`                    | `insufficient_scope`                     |
-| T5.6  | both  | resource-call        | Network error                               | `resource_failure`                       |
-| T5.7  | both  | resource-call        | 502 from resource                           | `resource_failure`                       |
-| T5.8  | both  | resource-call        | Session exists, no refresh token            | `unauthorized`                           |
+| T5.3  | both  | resource-call        | 401 desc=signature / 401 generic / 403      | `invalid_token` / `unauthorized` / `insufficient_scope` |
+| T5.4  | both  | resource-call        | Network error, and 5xx                      | `resource_failure` for both              |
+| T5.5  | both  | resource-call        | Session exists, no refresh token            | `unauthorized`                           |
 | T6.1  | both  | refresh semantics    | Refresh token survives Step 1               | Still in session after a successful exchange — **not** single-use |
 | T6.2  | both  | refresh semantics    | Two sequential calls, one login             | Both succeed; login runs **once**; Step 1 runs **twice** |
 | T6.3  | both  | refresh semantics    | Step 1 `invalid_grant`                      | `expired_token` + `requiresReauth: true`, and **no retry attempted** |
 | T6.4  | both  | refresh semantics    | Step 3 expired twice in a row               | `expired_token`; **exactly two** rounds, no third — retry is bounded |
-| T6.5  | both  | refresh semantics    | Response carries a rotated `refresh_token`  | Stored value is replaced, and the next call uses the new one |
 | T7.1  | SAML  | ID-JAG claims        | Payload with `sub_id`, no `sub`             | Subject resolves from `sub_id.nameid` without throwing |
-| T7.2  | SAML  | ID-JAG claims        | Two `sub_id`s, same `nameid`, different `sp_name_qualifier` | Treated as **different** subjects |
-| T7.3  | OIDC  | ID-JAG claims        | Payload with plain `sub`                    | Subject resolves from `sub`              |
 
-**Counts.** 20 path-neutral rows (T1.1–T1.6, T2.1–T2.6, T4.x, T5.x, T6.x
-as applicable) plus 2 OIDC-specific (T3.1, T3.2, T7.3) or 8
-SAML-specific (T2.7, T2.8, T3.3–T3.6, T7.1, T7.2). An OIDC build lands
-around **36 tests**; a SAML build around **41**. Implementations may
-merge or split them; what matters is each row's behaviour is asserted
+**About 18 rows on an OIDC build, 22 on SAML.** Implementations may merge
+or split them; what matters is that each row's behaviour is asserted
 somewhere.
 
-T6.2 is the row that catches the most important v3 regression — a build
-that still anchors on the ID Token passes almost everything else.
+**T6.2 is the one that matters most.** A build still anchored on the ID
+Token passes nearly every other row and fails this one.
+
+### Optional rows
+
+Worth adding if you have time, but they test the spec more than they test
+your code:
+
+- `XAA_PROTOCOL` unset defaults to `oidc`; scope lists with stray
+  whitespace are trimmed.
+- Ring buffer caps at 200 with FIFO eviction.
+- Step 1 rejects a response whose `issued_token_type` isn't `…id-jag`.
+- Auth-server discovery requests `oauth-authorization-server` rather than
+  `openid-configuration`.
+- A rotated `refresh_token` in a response replaces the stored one.
+- Two `sub_id`s with the same `nameid` but different `sp_name_qualifier`
+  resolve to **different** subjects.
+- OIDC ID-JAG with a plain `sub` resolves from `sub`.
 
 ## Required smoke tests (live boot, no network)
 
@@ -219,7 +214,7 @@ in on every access-token expiry fails here while passing E1.
 | 7 | Wait past ~10 minutes from login and call once more.                | Still 200. This is past the ID Token's life, proving you are not anchored on it. |
 
 Step 7 is the decisive one. If it fails, you are still using the ID Token
-as the `subject_token` — see `MIGRATION-v2-to-v3.md`.
+as the `subject_token` on Step 1 — it should be the refresh token.
 
 ### E7 — SAML end-to-end (new in v3, SAML path only)
 
@@ -243,7 +238,7 @@ does, the refresh token isn't being used as the anchor.
 
 | Capability                        | Notes                                                            |
 | --------------------------------- | ---------------------------------------------------------------- |
-| Hermetic suite                    | All rows for your path above, no live network.                    |
+| Hermetic suite                    | All required rows for your path, no live network.                 |
 | Test setup hook                   | Populates all env vars — including `XAA_PROTOCOL` — before any module loads config. |
 | Discovery cache reset             | Test helpers that flush cached OIDC metadata, SAML metadata, and resource-AS metadata between tests. |
 | Smoke probe script (optional)     | A bash/just/make recipe that runs the 9 live boot probes.         |
@@ -253,7 +248,7 @@ does, the refresh token isn't being used as the anchor.
 
 ```bash
 <your test command>
-# Expect: all rows for your path pass, no network used.
+# Expect: the required rows for your path pass, no network used.
 
 <your dev command>     # in another shell
 # Then run all 9 smoke probes; all should return the expected status codes.

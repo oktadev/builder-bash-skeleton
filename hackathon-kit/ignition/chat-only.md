@@ -49,37 +49,35 @@ read each, but only act when I explicitly ask you to implement
 something.
 
 Non-negotiables across the whole build:
-- The IdP REFRESH TOKEN is the session anchor. It is obtained by
-  requesting the offline_access scope, and it is what we present as
-  subject_token on every ID-JAG exchange. It is long-lived: server-side
-  session only, never the browser, never a log, never an env file.
-- Never anchor on the ID Token. On xaa.dev it lives ~10 minutes and is
-  good for roughly one exchange right after login.
+- The IdP REFRESH TOKEN is the session anchor, obtained by requesting the
+  offline_access scope, and presented as subject_token on every ID-JAG
+  exchange. Long-lived: server-side session only, never the browser,
+  never a log, never an env file.
+- Never anchor on the ID Token (~10 min on xaa.dev; good for roughly one
+  exchange right after login).
 - The resource auth server does NOT issue a refresh token, by design.
-  When the access token expires, mint a new ID-JAG from the refresh
-  token.
-- Server-side session only; no raw token of any kind reaches the browser
-- Two distinct OAuth client pairs (CLIENT_* for the IdP at Steps 0/0b/1,
-  RESOURCE_CLIENT_* for the resource auth server at Step 2) — never mix
-- Re-mint the ID-JAG and resource access token per call (don't cache);
-  the ID-JAG lives 5 minutes and may be single-use
-- OIDC path only: PKCE S256 base64url unpadded; state + nonce verified
-- SAML path only: RelayState, InResponseTo, and the assertion's
-  AudienceRestriction all verified; assertion base64url-encoded UNPADDED
-- Token redaction: <head 8>…<tail 8> for strings >16 chars; *** for
+  Access token expired → mint a new ID-JAG from the refresh token.
+- expired_token means two things: from the resource call, re-mint and
+  retry ONCE; from the ID-JAG exchange, the refresh token is dead and the
+  user must re-authenticate. Never retry-loop a dead refresh token.
+- Two OAuth client pairs, never mixed: CLIENT_* at the IdP (Steps 0/0b/1),
+  RESOURCE_CLIENT_* at the resource auth server (Step 2).
+- Re-mint the ID-JAG and access token per call; the ID-JAG lives 5 min
+  and may be single-use.
+- No raw token of any kind reaches the browser.
+- Token redaction: <head 8>…<tail 8> for strings >16 chars, *** for
   shorter; match keys with /(token|secret|assertion|jag|jwt)/i.
   SAMLResponse does NOT match that regex — handle it explicitly.
-- Tagged-union error shape: { ok: true, ... } | { ok: false, error,
-  ... } with `ok` as a literal, not a bool
-- expired_token means two things: from the resource call, re-mint and
-  retry once; from the ID-JAG exchange, the refresh token is dead and
-  the user must re-authenticate. Never retry-loop a dead refresh token.
+- Tagged-union errors: { ok: true, ... } | { ok: false, error, ... },
+  with `ok` a literal, not a bool.
+- OIDC only: PKCE S256 base64url unpadded; state + nonce verified.
+- SAML only: RelayState, InResponseTo, and AudienceRestriction verified;
+  assertion base64url-encoded UNPADDED.
 - URN spelling exactly:
     urn:ietf:params:oauth:grant-type:token-exchange  (Steps 0b + 1)
     urn:ietf:params:oauth:grant-type:jwt-bearer      (Step 2)
-    urn:ietf:params:oauth:token-type:id_token        (underscore)
-    urn:ietf:params:oauth:token-type:saml2           (SAML subject)
-    urn:ietf:params:oauth:token-type:refresh_token   (underscore)
+    urn:ietf:params:oauth:token-type:saml2           (Step 0b subject)
+    urn:ietf:params:oauth:token-type:refresh_token   (Step 1 subject)
     urn:ietf:params:oauth:token-type:id-jag          (hyphen)
 
 Some spec details are marked TODO(confirm) — unverified against

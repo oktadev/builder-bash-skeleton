@@ -7,8 +7,7 @@
 > other kit files — the agent reads them itself.
 >
 > **Kit version: v3.** New since v2: two protocol paths (OIDC and SAML),
-> and the IdP refresh token as the session anchor. If you have a working
-> v2 build, read `MIGRATION-v2-to-v3.md` first.
+> and the IdP refresh token as the session anchor.
 
 ---
 
@@ -27,11 +26,11 @@ Some spec details are marked `TODO(confirm)` — they could not be
 verified against xaa.dev at the time of writing. When you hit one, stop
 and ask me rather than filling in a plausible value.
 
-If your agent supports a project-memory file (`AGENTS.md` for Codex,
-`CLAUDE.md` for Claude Code, `.cursorrules` for Cursor), write a
-short note there capturing my protocol choice (Step 2 below) and stack
-choice (Step 3), plus a pointer to `./hackathon-kit/IGNITION.md` so
-future sessions resume correctly.
+This repo's agent digest is `AGENTS.md` (the
+[agents.md](https://agents.md) standard, read by most agents; `CLAUDE.md`
+imports it). Append a short note there capturing my protocol choice
+(§ 2 below) and stack choice (§ 3) so future sessions resume on the same
+path instead of re-asking.
 
 ## 1. Pre-flight (do this before any code)
 
@@ -161,47 +160,26 @@ report what you've tried — I'll unblock.
 
 ## 6. Invariants (apply throughout)
 
-These are non-negotiable across every file you write:
+**The canonical list is `reference/xaa-spec.md` § Invariants** — read it
+there, once, during § 1 pre-flight. It is not duplicated here.
 
-- **PKCE S256.** Never `plain`. Verifier and challenge are base64url
-  unpadded. *(OIDC path only.)*
-- **State + nonce verified.** State on callback, nonce on the ID Token.
-  *(OIDC path only. The SAML equivalents are `RelayState`,
-  `InResponseTo`, and the assertion's `AudienceRestriction` — all
-  mandatory.)*
-- **The refresh token is the session anchor.** It is a long-lived
-  credential. It lives in the server-side session, never in the
-  browser, never in a log, never in an env file. The session is
-  encrypted+signed; the cookie is httpOnly + `SameSite=Lax`.
-- **`offline_access` on Step 0 / Step 0b.** Without it the IdP issues
-  no refresh token and the session dies after ~10 minutes.
-- **Never anchor on the ID Token.** It lives ~10 minutes on xaa.dev and
-  is good for roughly one exchange right after login. Verify its
-  `nonce`, read its claims, then stop depending on it.
-- **Two distinct OAuth client pairs.** `CLIENT_*` for the IdP (Steps 0,
-  0b, 1); `RESOURCE_CLIENT_*` for the resource auth server (Step 2).
-  Mixing them is the most common cause of opaque `invalid_client`
-  failures.
-- **Re-mint per call.** Neither the ID-JAG nor the resource access
-  token is cached; re-run Steps 1 + 2 on each `/api/call`. The ID-JAG
-  lives 5 minutes and xaa.dev says it may be single-use.
-- **URN spelling matters.** `urn:ietf:params:oauth:grant-type:token-exchange`
-  (Steps 0b + 1, hyphen between `token` and `exchange`).
-  `urn:ietf:params:oauth:grant-type:jwt-bearer` (Step 2, hyphen
-  between `jwt` and `bearer`). Token-type URNs: `id_token`
-  (underscore), `saml2`, `refresh_token` (underscore), `id-jag`
-  (hyphen).
-- **Token redaction.** Every log line touching a token, secret,
-  assertion, ID-JAG, or JWT is reduced to `<head>…<tail>` (16 char+)
-  or `***` (≤16 char) before write. Match keys with
-  `/(token|secret|assertion|jag|jwt)/i`. Note `SAMLResponse` does
-  **not** match that regex — handle it explicitly.
-- **Tagged-union error shape.** `{ ok: true, … } | { ok: false, error:
-  ErrorCode, … }`. `ok` is a literal, not a `bool`. See
-  `reference/error-mapping.md`.
-- **`expired_token` means two different things.** From Step 3 →
-  re-mint and retry once. From Step 1 → the refresh token is dead;
-  re-authenticate. Branch on `upstream_step`, never on the code alone.
+These four are repeated because they're where agents actually drift:
+
+1. **The refresh token is the session anchor, not the ID Token.** Step 1
+   sends `subject_token_type=…:refresh_token`. Sending `…:id_token` is
+   the v2 pattern most training data contains; it works for ~10 minutes,
+   then fails. If you find yourself writing `id_token` on Step 1, that's
+   the drift.
+2. **`offline_access` on Step 0 / Step 0b — and assert it came back.** No
+   refresh token means no session past ~10 minutes, and it resurfaces
+   later as an unrelated-looking `invalid_grant`.
+3. **`expired_token` is two states.** From Step 3 → re-mint, retry
+   **once**, bounded by a counter. From Step 1 → the refresh token is
+   dead; **re-authenticate, never retry.** Branch on
+   `details.upstream_step`. Conflating them is an infinite loop.
+4. **The two client pairs aren't interchangeable.** `CLIENT_*` at the IdP
+   (Steps 0, 0b, 1); `RESOURCE_CLIENT_*` at the resource auth server
+   (Step 2). Most common cause of opaque `invalid_client`.
 
 ## 7. Done state
 

@@ -138,8 +138,7 @@ you sent:
    expired: the ID Token lives **~10 minutes** on xaa.dev and its docs
    describe it as *"only good for one exchange right after login."* If
    your app works immediately after login and fails a few minutes later,
-   this is your bug. Switch to the refresh token — see
-   `MIGRATION-v2-to-v3.md`.
+   this is your bug. Switch to the refresh token.
 
 ### Resolution
 
@@ -424,47 +423,40 @@ Three usual suspects:
 
 ### Symptom
 
-Step 0b returns `invalid_grant`, `invalid_request`, or a parse error.
-Or — worse and more common — **nothing arrives at your ACS at all** and
-the browser just sits on the IdP.
-
-*If nothing arrives:* your registered ACS URL doesn't match
-`SAML_ACS_URL`. Unlike OIDC's explicit `redirect_uri_mismatch` (D-1), a
-wrong ACS fails silently — the IdP POSTs into the void. Check
-byte-exactness before anything else.
+Step 0b returns `invalid_grant`, `invalid_request`, or a parse error. Or —
+more common — **nothing arrives at your ACS at all** and the browser sits
+on the IdP. In that case your registered ACS URL doesn't match
+`SAML_ACS_URL`: unlike OIDC's explicit `redirect_uri_mismatch` (D-1), a
+wrong ACS fails silently. Check byte-exactness first.
 
 ### Root cause
 
 Five candidates, in the order they bite:
 
-1. **You sent the whole `SAMLResponse`.** The `subject_token` is the
-   bare `<saml:Assertion>` element, not the enclosing document.
-2. **You used standard base64, padded.** RFC 8693 § 3 requires
-   **base64url unpadded** for `…token-type:saml2`. Padded standard
-   base64 contains `+` and `=`; in a form body `+` decodes to a space,
-   so you may get a confusing parse error rather than a clean rejection.
-   (Draft-04's own § 4.5 example shows padded standard base64 — it's
-   wrong, or at least not form-safe. Follow RFC 8693.)
-3. **You re-serialised the XML and broke the signature.** XML-DSIG
-   covers exact bytes including canonicalisation. Parse to *verify*, but
-   extract the *original* bytes to send.
-4. **The SAML Audience doesn't map to your `CLIENT_ID`.** Draft-04
-   § 4.5 requires the IdP to verify that the Audience / SPEntityID maps
-   to the authenticated OAuth client. A registered SP that belongs to a
-   different client fails here, not at SSO.
-5. **`offline_access` missing from the Step 0b `scope`.** You'll get a
-   200 with no `refresh_token` rather than an error. See D-17.
+1. **You sent the whole `SAMLResponse`.** The `subject_token` is the bare
+   `<saml:Assertion>` element.
+2. **Standard base64, padded.** RFC 8693 § 3 requires **base64url
+   unpadded**. In a form body `+` decodes to a space, so you may see a
+   parse error rather than a clean rejection. (Draft-04 § 4.5's own
+   example is padded standard base64 — not form-safe. Follow RFC 8693.)
+3. **You re-serialised the XML and broke the signature.** XML-DSIG covers
+   exact bytes. Parse to *verify*, but send the *original* bytes.
+4. **SAML Audience doesn't map to your `CLIENT_ID`.** Draft-04 § 4.5
+   requires the IdP to verify the Audience / SPEntityID maps to the
+   authenticated client, so an SP belonging to a different client fails
+   here rather than at SSO.
+5. **`offline_access` missing from the Step 0b scope.** Yields a 200 with
+   no `refresh_token` rather than an error. See D-17.
 
 ### Debugging prompt
 
-> My SAML assertion is rejected at Step 0b. Verify in order: (a) I'm
-> sending the bare `<saml:Assertion>` element, not the whole
-> `SAMLResponse`; (b) it's base64url encoded with **no `=` padding**;
-> (c) I extracted the original bytes rather than re-serialising after
-> parsing; (d) the assertion's `AudienceRestriction` corresponds to the
-> `CLIENT_ID` I'm authenticating with; (e) `scope` includes
-> `offline_access`. Print the first 80 chars of what I'm sending as
-> `subject_token` and confirm there is no `+`, `/`, or `=` in it.
+> My SAML assertion is rejected at Step 0b. Verify in order: (a) I send
+> the bare `<saml:Assertion>`, not the whole `SAMLResponse`; (b) it's
+> base64url with no `=` padding; (c) I send original bytes rather than
+> re-serialising after parsing; (d) the `AudienceRestriction` corresponds
+> to the `CLIENT_ID` I authenticate with; (e) `scope` includes
+> `offline_access`. Print the first 80 chars of my `subject_token` and
+> confirm no `+`, `/`, or `=`.
 
 ---
 
@@ -475,36 +467,27 @@ Five candidates, in the order they bite:
 ### Symptom
 
 Step 1 succeeds and returns an ID-JAG. Step 2 returns `invalid_grant`,
-with a description mentioning subject, NameID, or `sub_id` — or no
-useful description at all.
+mentioning subject, NameID, or `sub_id` — or nothing useful.
 
 ### Root cause
 
-Draft-04 § 3.2.2 specifies `invalid_grant` for *every* `sub_id`
-resolution failure, so several distinct problems look identical:
-
-- No `sub_id` in the required `saml-nameid` format.
-- `sub_id` malformed, or a format the auth server doesn't support.
-- **The SAML issuer isn't associated with the validated ID-JAG issuer**
-  for your tenant. Per § 9.5 the auth server may use a `saml-nameid`
-  `sub_id` *only when* the validated ID-JAG issuer is explicitly
-  associated with `sub_id.issuer` via local config or federation
-  metadata. On xaa.dev that association is the per-tenant
-  `saml_id_jag.issuers` allow-list — see D-16.
-- **Subject resolution keyed on the wrong members.** § 3.2.2: the auth
-  server *"MUST compare every member […] that is part of the set of
-  identifier fields it uses"* and *"MUST NOT resolve the subject using
-  only the `nameid` value."* When the `<NameID>` is SP-scoped,
-  `sp_name_qualifier` is part of the subject namespace.
+Draft-04 § 3.2.2 specifies `invalid_grant` for *every* `sub_id` resolution
+failure, so several distinct problems look identical: no `sub_id` in the
+`saml-nameid` format; a malformed or unsupported format; **the SAML issuer
+not associated with the validated ID-JAG issuer** for your tenant (§ 9.5 —
+on xaa.dev that's the per-tenant `saml_id_jag.issuers` allow-list, see
+D-16); or subject resolution keyed on the wrong members. On that last
+point § 3.2.2 is normative: compare **every** member you key on, never
+resolve on `nameid` alone, and treat `sp_name_qualifier` as part of the
+subject namespace when the NameID is SP-scoped.
 
 ### Debugging prompt
 
-> Step 2 rejects my SAML-derived ID-JAG. Decode the ID-JAG payload and
-> show me the `sub_id` object. Confirm `format` is `saml-nameid` and that
-> `issuer`, `nameid` are present. Then check whether the resource auth
-> server's tenant config associates my `sub_id.issuer` with the ID-JAG's
-> `iss` — if not, that's the failure, and it's a registration problem
-> rather than a code problem.
+> Step 2 rejects my SAML-derived ID-JAG. Decode the payload and show me
+> the `sub_id` object — confirm `format` is `saml-nameid` and `issuer` +
+> `nameid` are present. Then check whether the resource auth server's
+> tenant associates my `sub_id.issuer` with the ID-JAG's `iss`. If not,
+> that's a registration problem, not a code problem.
 
 ---
 
@@ -514,38 +497,26 @@ resolution failure, so several distinct problems look identical:
 
 ### Symptom
 
-Everything through Step 1 is clean; the ID-JAG looks correct and carries
-a well-formed `sub_id`. Step 2 rejects it anyway, consistently, with
+Everything through Step 1 is clean, the ID-JAG carries a well-formed
+`sub_id`, and Step 2 rejects it anyway — consistently, with
 `invalid_grant`.
 
 ### Root cause
 
-The resource auth server gates SAML-derived ID-JAGs **per tenant**. Each
-tenant carries a `saml_id_jag` config with an `enabled` flag and an
-allow-list of SAML issuers. If your tenant has it disabled, no
-client-side fix will help — the ID-JAG is correct and still refused.
-
-On xaa.dev the built-in tenant `customer1` has it enabled with issuer
-`https://idp.xaa.dev/saml`; `customer2` and `customer3` have it
-disabled.
+The resource auth server gates SAML-derived ID-JAGs **per tenant**, via a
+`saml_id_jag` config with an `enabled` flag and an allow-list of SAML
+issuers. If yours is disabled, no client-side fix helps — the ID-JAG is
+correct and still refused. On xaa.dev, `customer1` has it enabled for
+issuer `https://idp.xaa.dev/saml`; `customer2` and `customer3` don't.
 
 ### Resolution
 
-Confirm your tenant's configuration, and that its allow-list contains
-the `sub_id.issuer` your assertions carry. If you registered a BYOR
-resource, this is yours to set. If you're on a built-in tenant, use one
-with SAML enabled.
+Confirm your tenant's config and that its allow-list contains the
+`sub_id.issuer` your assertions carry. On a BYOR resource that's yours to
+set; on a built-in tenant, use one with SAML enabled.
 
-This is the one failure in the SAML path that is **not** a bug in your
-app. Recognising it quickly saves hours.
-
-### Debugging prompt
-
-> Steps 0–1 are clean and my ID-JAG carries a valid `sub_id`, but Step 2
-> refuses it every time. Check whether the resource tenant I'm targeting
-> has SAML ID-JAG support enabled and whether my `sub_id.issuer` is in
-> its allow-list. If it isn't, tell me — this is a registration issue,
-> not something to fix in code.
+**This is the one SAML failure that isn't a bug in your app.** Recognising
+it quickly saves hours.
 
 ---
 
@@ -553,45 +524,35 @@ app. Recognising it quickly saves hours.
 
 ### Symptom
 
-Login "succeeds" and the dashboard renders. Then, minutes later, every
-`/api/call` fails with `invalid_grant` on Step 1. Or `/api/auth/session`
-reports no refresh token at all.
+Login "succeeds" and the dashboard renders. Minutes later every
+`/api/call` fails with `invalid_grant` on Step 1 — or
+`/api/auth/session` reports no refresh token at all.
 
 ### Root cause
 
-The IdP never returned a `refresh_token`, and nothing caught it at the
-time:
+The IdP never returned one and nothing caught it:
 
-1. **`offline_access` missing** from the OIDC authorize `scope`, or from
-   the Step 0b `scope` on the SAML path. This is the overwhelmingly
-   likely cause.
-2. **The scope was silently dropped** by an OIDC library that filters
-   against a hardcoded list. `offline_access` *is* in xaa.dev's
-   `scopes_supported`, so this is rarer — but verify the assembled URL
-   rather than the config object.
-3. **Consent wasn't prompted.** xaa.dev's demo sends `prompt=consent`
-   alongside `offline_access`. Whether it's *required* is
-   `TODO(confirm)`.
-4. **You stored the wrong field.** The token response contains both
-   `access_token` (the IdP's, which this kit never uses) and
-   `refresh_token`. Storing the former gets you a token that Step 1
-   rejects.
+1. **`offline_access` missing** from the OIDC authorize scope, or the
+   Step 0b scope. Overwhelmingly the likely cause.
+2. **The scope was silently dropped** by a library filtering against a
+   hardcoded list. Verify the assembled URL, not the config object.
+3. **Consent wasn't prompted.** xaa.dev's demo sends `prompt=consent`;
+   whether it's required is `TODO(confirm)`.
+4. **You stored the wrong field.** The response carries both
+   `access_token` (the IdP's, unused by this kit) and `refresh_token`.
 
 ### Resolution
 
-Assert on the refresh token's presence **at login**, and fail loudly
-naming `offline_access`. A missing refresh token that surfaces ten
-minutes later as `invalid_grant` is one of the most confusing failures
-in this kit; catching it at the source costs three lines.
+Assert the refresh token's presence **at login** and fail loudly naming
+`offline_access`. Catching it at the source costs three lines; catching it
+ten minutes later costs an afternoon.
 
 ### Debugging prompt
 
-> My session has no refresh token. Print the exact `scope` parameter my
-> authorize URL (or Step 0b request) sends, and confirm it contains
-> `offline_access`. Then confirm I'm storing the response's
-> `refresh_token` field and not its `access_token`. Add an assertion at
-> login that fails with a message naming `offline_access` if no refresh
-> token came back.
+> My session has no refresh token. Print the exact `scope` my authorize
+> URL (or Step 0b request) sends and confirm it contains `offline_access`.
+> Confirm I store the response's `refresh_token`, not its `access_token`.
+> Add a login-time assertion that fails naming `offline_access`.
 
 ---
 
@@ -599,37 +560,32 @@ in this kit; catching it at the source costs three lines.
 
 ### Symptom
 
-Step 2 returns `invalid_grant` with a description mentioning `iat`,
-clock, or skew. Intermittent, or suddenly constant after a laptop
-sleep/resume or a container start.
+Step 2 returns `invalid_grant` mentioning `iat`, clock, or skew.
+Intermittent — or suddenly constant after a laptop sleep/resume or a
+container start.
 
 ### Root cause
 
-xaa.dev tolerates **30 seconds** of skew on the ID-JAG's `iat`, and
-rejects beyond that. Your system clock has drifted. Combined with the
-ID-JAG's 5-minute lifetime, there is little margin.
+xaa.dev tolerates **30 seconds** of skew on the ID-JAG's `iat`. Your
+system clock has drifted, and the ID-JAG's 5-minute life leaves little
+margin.
 
 ### Resolution
 
-Fix the clock, not the code. There is no correct code change here — the
-ID-JAG is minted by the IdP with the IdP's `iat`, and your machine's
-disagreement about "now" is the entire problem.
+Fix the clock, not the code. The ID-JAG is minted with the IdP's `iat`;
+your machine's disagreement about "now" is the entire problem.
 
 ```bash
-# macOS
-sudo sntp -sS time.apple.com
-# Linux (systemd)
-timedatectl status && sudo systemctl restart systemd-timesyncd
-# Docker: the container inherits the host clock; check the host,
-# and be suspicious after a VM suspend/resume.
+sudo sntp -sS time.apple.com                  # macOS
+timedatectl status                            # Linux — then restart systemd-timesyncd
+# Docker inherits the host clock; be suspicious after a VM suspend.
 ```
 
 ### Debugging prompt
 
 > Step 2 rejects my ID-JAG with a clock/`iat` complaint. Decode the
-> ID-JAG payload, print its `iat` and `exp`, and compare against my
-> system time. If the delta exceeds 30 s, tell me to fix my clock rather
-> than changing code.
+> payload, print `iat` and `exp`, compare against system time. If the
+> delta exceeds 30 s, tell me to fix my clock rather than change code.
 
 ---
 
@@ -637,45 +593,39 @@ timedatectl status && sudo systemctl restart systemd-timesyncd
 
 ### Symptom
 
-One of:
-- The user bounces between `/dashboard` and `/login` endlessly.
-- Your logs show Step 1 called dozens of times in a few seconds.
-- A "retry" button in the UI never succeeds no matter how often it's
-  clicked.
+The user bounces between `/dashboard` and `/login` endlessly; or Step 1 is
+called dozens of times in seconds; or a "retry" button never succeeds no
+matter how often it's clicked.
 
 ### Root cause
 
 `expired_token` was treated as one state when it is two.
 
-- **Retrying a dead refresh token.** Step 1's `invalid_grant` means the
-  refresh token cannot be repaired — expired, revoked, and invalidated
-  are indistinguishable and none are retryable. A retry loop here is
-  infinite by construction.
-- **Unbounded re-mint on Step 3 expiry.** If a freshly minted access
-  token is *also* rejected as expired, re-minting again won't help
-  (that's usually D-18, clock skew). Recursion without a counter turns
-  it into a storm.
-- **Offering "retry" when `requiresReauth` is set.** A button that
-  cannot ever work.
+- **Retrying a dead refresh token.** Step 1's `invalid_grant` can't be
+  repaired — expired, revoked, and invalidated are indistinguishable and
+  none are retryable. A retry loop here is infinite by construction.
+- **Unbounded re-mint on Step 3 expiry.** If a fresh access token is
+  *also* rejected as expired, that's usually D-18, and recursion without a
+  counter turns it into a storm.
+- **Offering "retry" when `requiresReauth` is set** — a button that cannot
+  ever work.
 
 ### Resolution
 
-Branch on `details.upstream_step`, per `reference/error-mapping.md`
-§ The two faces of `expired_token`:
+Branch on `details.upstream_step`, per `reference/error-mapping.md` § The
+two faces of `expired_token`:
 
 ```
-step3 + expired  → re-mint and retry EXACTLY ONCE (counter, not recursion)
-step1 + invalid_grant → requiresReauth: true; offer sign-in only, never retry
+step3 + expired        → re-mint, retry EXACTLY ONCE (counter, not recursion)
+step1 + invalid_grant  → requiresReauth: true; sign-in only, never retry
 ```
 
 ### Debugging prompt
 
 > I have a re-auth loop / retry storm. Show me where I branch on
 > `expired_token`. It must distinguish `upstream_step === "step3"`
-> (re-mint and retry once, bounded by a counter) from
-> `upstream_step === "step1"` (refresh token is dead — set
-> `requiresReauth`, offer sign-in, never retry). Confirm the Step 3
-> retry is bounded by a counter rather than recursion.
+> (re-mint, retry once, counter-bounded) from `"step1"` (refresh token
+> dead — set `requiresReauth`, offer sign-in, never retry).
 
 ---
 

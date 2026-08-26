@@ -8,8 +8,8 @@
 [![ChatGPT](https://img.shields.io/badge/ChatGPT-chat--only-10A37F?logo=openai&logoColor=white)](https://chatgpt.com)
 [![Sourcegraph Cody](https://img.shields.io/badge/Cody-compatible-FF5543?logo=sourcegraph&logoColor=white)](https://sourcegraph.com/cody)
 
-> **Kit version: v3** — see [CHANGELOG.md](CHANGELOG.md). On v2? Read the
-> [migration note](hackathon-kit/MIGRATION-v2-to-v3.md).
+> **Kit version: v3.** New since v2: two protocol paths (OIDC and SAML),
+> and the IdP refresh token as the session anchor.
 > **Status:** Tested against `xaa.dev` as of **2026-08-26**.
 > Targets: Cross-App Access (ID-JAG) draft-04, RFC 8693 (Token Exchange),
 > RFC 7523 (JWT-Bearer), RFC 7636 (PKCE), RFC 6750 (Bearer +
@@ -88,49 +88,29 @@ What you do **not** control: the three xaa.dev hostnames (`idp.xaa.dev`,
 PKCE method (S256), and the eight-element `ErrorCode` set. Those are the
 spec.
 
+The kit is silent on everything else — logger, UI shape, session store,
+test runner — because you should pick what you'll move fastest in. It
+specifies *behaviour*, not libraries.
+
 ---
 
 ## 30-second mental model
 
 ```
-        Browser
-           │ 1. /login → /api/auth/login
-           ▼
-   ┌──────────────────┐   OIDC Code + PKCE     ┌──────────────────┐
-   │  Your app        │   (+ offline_access)   │                  │
-   │  (any stack)     │ ─────────── OR ──────▶ │  idp.xaa.dev     │
-   │                  │   SAML 2.0 SSO         │  (IdP)           │
-   └──────────────────┘ ◀───────────────────── └──────────────────┘
-           │              ID Token + refresh token   (OIDC)
-           │              assertion → [Step 0b] → refresh token (SAML)
-           │
-           │   ══ REFRESH TOKEN = the session anchor ══
-           │
-           │ 2. RFC 8693 token-exchange (CLIENT_*)
-           │    subject_token = refresh token
-           ▼
-   ┌──────────────────────────────────────────┐
-   │   idp.xaa.dev → ID-JAG (audience=auth)   │   5 min, may be single-use
-   └──────────────────────────────────────────┘
-           │
-           │ 3. RFC 7523 jwt-bearer (RESOURCE_CLIENT_*)
-           ▼
-   ┌──────────────────────────────────────────┐
-   │   auth.resource.xaa.dev → access_token   │   ~2 h, no refresh token
-   └──────────────────────────────────────────┘
-           │
-           │ 4. Bearer call
-           ▼
-   ┌──────────────────────────────────────────┐
-   │   api.resource.xaa.dev/<RESOURCE_PATH>   │
-   └──────────────────────────────────────────┘
+OIDC:  authorize(+offline_access) ──► ID Token + REFRESH TOKEN ─┐
+SAML:  SSO ─► assertion ─► [0b] ────► REFRESH TOKEN ────────────┤
+                                                                ▼
+       [1] refresh token → ID-JAG   [2] ID-JAG → access token   [3] Bearer call
+        RFC 8693, CLIENT_*           RFC 7523, RESOURCE_CLIENT_*
+        5 min, single-use-ish        ~2 h, no refresh token
 
-   Steps 2–4 re-run on every /api/call, off the same refresh token.
+                        └──── re-run 1+2 on every /api/call ────┘
 ```
 
 Two OAuth client pairs. The refresh token is the anchor. Re-mint
 everything below it per call. Server-side session only. That's the whole
-game.
+game — full sequence diagrams in
+`hackathon-kit/reference/architecture.md`.
 
 **The one rule participants get wrong:** `expired_token` from the
 resource call means *re-mint and retry once*. `expired_token` from the
@@ -144,20 +124,44 @@ retry the second one.
 Pick the path that matches your tool. After igniting, finish Day 0 below
 so the agent's pre-flight passes.
 
-| Tool                                                          | Ignition file                                                                                                                |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **OpenAI Codex / Claude Code / Cursor agent / Aider with FS** | `hackathon-kit/IGNITION.md` — paste verbatim as your first message; the agent reads the rest of the kit itself.              |
-| **ChatGPT (browser) / chat-only tools without FS access**     | `hackathon-kit/ignition/chat-only.md` — copy-paste–driven, slower but works without shell access.                            |
+| Your tool                                            | Ignition file                                                                                                   |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Any agent with filesystem + shell access**          | `hackathon-kit/IGNITION.md` — paste verbatim as your first message; the agent reads the rest of the kit itself.  |
+| **Chat-only tools without filesystem access**         | `hackathon-kit/ignition/chat-only.md` — copy-paste–driven, slower but works without shell access.                |
 
-Codex / Claude Code / Cursor will *also* auto-load the repo-root files
-`AGENTS.md`, `CLAUDE.md`, and `.cursorrules` — those are short digests
-of the invariants, not substitutes for `hackathon-kit/IGNITION.md`. The
-agent should still read IGNITION first.
+### Agent compatibility
 
-Inline-assist tools (Copilot, Cody) work best paired with one of the
-agentic flows above — open `hackathon-kit/IGNITION.md` in your editor
-and use the inline assistant for tab-completion as you walk through the
-prompts.
+The repo ships **one** agent digest: **`AGENTS.md`**, following the
+[agents.md](https://agents.md) standard (stewarded by the Agentic AI
+Foundation). It's auto-loaded, with no setup, by:
+
+> Codex · Cursor · GitHub Copilot coding agent · Windsurf · Zed · Warp ·
+> Junie (JetBrains) · Amp · Devin · Factory · Jules · goose · opencode ·
+> RooCode · Kilo Code · Augment Code · Ona · VS Code · UiPath
+
+Two need one line of config to pick it up:
+
+```yaml
+# Aider — .aider.conf.yml
+read: AGENTS.md
+```
+```json
+// Gemini CLI — .gemini/settings.json
+{ "context": { "fileName": "AGENTS.md" } }
+```
+
+**Claude Code** isn't on that roster yet, so `CLAUDE.md` exists purely to
+`@AGENTS.md`-import it. If your agent reads some other filename
+(`.clinerules`, `.windsurfrules`, `.junie/guidelines.md`, …), a one-line
+file pointing at `AGENTS.md` is enough — don't copy the content, it goes
+stale.
+
+The digest is a **short summary of the invariants, not a substitute for**
+`hackathon-kit/IGNITION.md`. The agent should still read IGNITION first.
+
+Inline-assist tools work best paired with one of the agentic flows above —
+open `hackathon-kit/IGNITION.md` in your editor and use the inline
+assistant as you walk through the prompts.
 
 ---
 
@@ -211,15 +215,12 @@ stores an httpOnly encrypted cookie will work.
 ```
 .
 ├── README.md                       (this file — your help doc)
-├── CHANGELOG.md                    version history — what changed in v3
-├── AGENTS.md                       auto-loaded by Codex / Cursor — invariants digest
-├── CLAUDE.md                       auto-loaded by Claude Code — invariants digest
-├── .cursorrules                    Cursor project rules
+├── AGENTS.md                       the agent digest (agents.md standard, ~20 tools)
+├── CLAUDE.md                       thin @AGENTS.md import for Claude Code
 ├── llms.txt                        AI-discoverable repo index
 ├── .env.example                    env template — copy to .env.local
 └── hackathon-kit/                  (the spec — treat as read-only)
-    ├── IGNITION.md                 paste-into-agent first message (Codex/Claude Code/Cursor)
-    ├── MIGRATION-v2-to-v3.md       upgrading a working v2 (OIDC-only) build
+    ├── IGNITION.md                 paste-into-agent first message
     ├── 00-brief.md                 hackathon task brief + protocol choice
     ├── 01-project-skeleton.md      stack scaffold + env config + session + token storage
     ├── 02-user-login.md            OIDC (PKCE) or SAML (SSO + Step 0b) — branched
@@ -267,27 +268,6 @@ the loop. If you're driving manually:
 Each prompt is self-contained — you can also feed an AI just `03-…` to
 add token exchange to an existing app, or just `04-…` to harden an
 existing call layer.
-
----
-
-## Decisions you control
-
-The kit is intentionally silent on:
-
-- **Language / framework.** See the stack picker above.
-- **OIDC / OAuth library.** Whatever's idiomatic. The prompts describe
-  *what* the wire format must be, not *which* library to call.
-- **Session storage.** Sealed cookie (httpOnly + encrypted) or
-  server-stored (Redis / SQLite / DB) — both pass the kit's checks.
-- **UI shape.** Server-rendered templates, SPA, TUI, plain HTML — the
-  kit just asks for surfaces with specific behaviour.
-- **Logger.** stdout is fine in dev. The 200-entry FIFO ring buffer the
-  observability surface reads from is the only structural requirement.
-- **Test runner.** Whatever ships with your stack. The hermetic
-  scenarios in `hackathon-kit/07-testing.md` describe outcomes, not
-  assertions.
-
-The kit is silent because you should pick what you'll move fastest in.
 
 ---
 

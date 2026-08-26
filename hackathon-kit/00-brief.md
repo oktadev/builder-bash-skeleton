@@ -105,32 +105,25 @@ one matching your path.
 
 ## Non-negotiables
 
-- **`offline_access` requested at Step 0 / Step 0b.** No refresh token
-  means no session past ~10 minutes.
-- **The refresh token never leaves the server.** Not to the browser, not
-  to a log, not to `.env.local`. It is the longest-lived credential in
-  the system and xaa.dev has **no revocation endpoint** — a leak cannot
-  be undone from your app.
-- **Server-side token storage.** No raw token of any kind reaches the
-  browser. The browser only ever sees an encrypted session cookie (or
-  equivalent in your stack).
-- **Two distinct client credential pairs.** `CLIENT_ID/SECRET` (Steps 0,
-  0b, 1) ≠ `RESOURCE_CLIENT_ID/SECRET` (Step 2). Mixing them is the most
-  common source of opaque `invalid_client` failures.
-- **Token redaction.** Every log line that holds a token, secret,
-  assertion, ID-JAG, or JWT must be reduced to `head…tail` or `***`.
-  Note `SAMLResponse` doesn't match the standard key regex — handle it.
-- **Re-mint per call.** Don't persist the ID-JAG or the resource access
-  token. Re-run Steps 1 + 2 from the session's refresh token on each
-  protected call. The ID-JAG lives 5 minutes and may be single-use.
-- **▸ OIDC path: PKCE S256, never `plain`. State + nonce verification
-  mandatory.**
-- **▸ SAML path: assertion base64url-encoded *unpadded*. Signature,
-  `InResponseTo`, and `AudienceRestriction` verification mandatory.
-  NameID format `emailAddress` or `persistent` — never `transient`.**
-- **Callback URI byte-exact.** What you put in `REDIRECT_URI` (OIDC) or
-  `SAML_ACS_URL` (SAML) must match what you registered at xaa.dev
-  (scheme, host, port, path).
+**The full list is `reference/xaa-spec.md` § Invariants.** Read it once
+before you start; it's short and it's canonical. The four below are the
+ones that most often get built wrong:
+
+- **`offline_access` at Step 0 / Step 0b, and assert the refresh token
+  came back.** No refresh token means no session past ~10 minutes, and
+  the failure surfaces later as an unrelated-looking `invalid_grant`.
+- **Never anchor on the ID Token.** ~10 min lifetime; xaa.dev calls it
+  *"only good for one exchange right after login."*
+- **`expired_token` is two states.** From the resource call → re-mint and
+  retry **once**. From the ID-JAG exchange → the refresh token is dead,
+  **re-authenticate, never retry.**
+- **Two client pairs, not interchangeable.** `CLIENT_*` at the IdP
+  (Steps 0, 0b, 1); `RESOURCE_CLIENT_*` at the resource auth server
+  (Step 2).
+
+Plus one per path: **OIDC** — PKCE S256 with state + nonce verified.
+**SAML** — assertion base64url *unpadded*, with signature,
+`InResponseTo`, and `AudienceRestriction` all verified.
 
 ---
 

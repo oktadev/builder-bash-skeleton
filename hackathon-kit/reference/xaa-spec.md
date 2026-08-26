@@ -5,8 +5,7 @@ prompt that performs an XAA exchange links here. If you change a field
 name, change it here once.
 
 **Kit version: v3.** Two protocol paths (OIDC and SAML); the IdP refresh
-token is the session anchor. See `MIGRATION-v2-to-v3.md` if you built
-against v2.
+token is the session anchor.
 
 ---
 
