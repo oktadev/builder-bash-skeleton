@@ -1,4 +1,4 @@
-# Cursor project rules — XAA Hackathon Kit
+# Cursor project rules — XAA Hackathon Kit (v3)
 
 This repository is a hackathon kit for building a Cross-App Access (XAA)
 Requesting App against the public xaa.dev playground. The kit at
@@ -9,6 +9,7 @@ Requesting App against the public xaa.dev playground. The kit at
 Read `hackathon-kit/IGNITION.md` first. It contains the full execution
 loop. Then read in order:
 
+- `README.md` (repo root)
 - `hackathon-kit/00-brief.md`
 - `hackathon-kit/reference/glossary.md`
 - `hackathon-kit/reference/env-vars.md`
@@ -16,23 +17,67 @@ loop. Then read in order:
 - `hackathon-kit/reference/error-mapping.md`
 - `hackathon-kit/reference/architecture.md`
 
+## Ask the protocol question first
+
+Before the stack question, ask: **OIDC or SAML?** OIDC is the default.
+This determines Step 0, which env vars are required, and whether Step 0b
+runs. Set `XAA_PROTOCOL` to match, then commit to it.
+
+Never implement both paths. Sections marked `### ▸ OIDC path` /
+`### ▸ SAML path` are alternatives; `> **SAML path only.**` /
+`> **OIDC path only.**` blocks are skippable. Unmarked text applies to
+both.
+
+## The flow
+
+```
+OIDC:  authorize(+offline_access) ──► ID Token + REFRESH TOKEN ─┐
+SAML:  SSO ─► assertion ─► [0b] ────► REFRESH TOKEN ────────────┤
+                                                                ▼
+       [1] refresh token → ID-JAG   [2] ID-JAG → access token   [3] Bearer call
+                        └──── re-run 1+2 on every /api/call ────┘
+```
+
 ## Non-negotiable invariants
 
-- PKCE S256 only; verifier + challenge base64url unpadded.
-- Server-side session only — raw ID Token never reaches the browser.
-- Cookie: httpOnly + `SameSite=Lax`.
-- Two OAuth client pairs: `CLIENT_*` (IdP, Steps 0+1) and
+- **The IdP refresh token is the session anchor.** Requested via
+  `offline_access`; presented as `subject_token` with
+  `subject_token_type=…:refresh_token` on every ID-JAG exchange.
+  Long-lived credential — server-side session only, never the browser,
+  never a log, never an env file.
+- **Never anchor on the ID Token** — ~10 min lifetime, good for roughly
+  one exchange after login. That's the v2 pattern; don't drift back.
+- **The resource auth server issues no refresh token** (draft-04
+  § 4.4.3). Access token expired → mint a new ID-JAG.
+- `offline_access` on Step 0 / Step 0b, and assert it came back.
+- PKCE S256 only; verifier + challenge base64url unpadded. *(OIDC only.)*
+- Verify state on callback, nonce on the ID Token. *(OIDC only; SAML's
+  `RelayState` + `InResponseTo` + `AudienceRestriction` are equally
+  mandatory.)*
+- SAML `subject_token` is the **bare `<saml:Assertion>`** element,
+  **base64url unpadded**. *(SAML only.)*
+- Server-side session only — no raw token reaches the browser.
+- Cookie: httpOnly + `SameSite=Lax`. (On SAML, the ACS is a cross-site
+  POST where `Lax` won't send cookies — carry the session id in
+  `RelayState` instead of downgrading to `None`.)
+- Two OAuth client pairs: `CLIENT_*` (IdP, Steps 0/0b/1) and
   `RESOURCE_CLIENT_*` (resource auth server, Step 2). Never mix.
-- Re-mint resource access token per call (don't cache).
-- Verify state on callback, nonce on ID Token.
+- Re-mint the ID-JAG and access token per call (don't cache). The ID-JAG
+  lives 5 min and may be single-use.
+- **`expired_token` is two states.** Step 3 → re-mint, retry **once**
+  (counter, not recursion). Step 1 → refresh token is dead,
+  **re-authenticate, never retry.** Branch on `upstream_step`.
 - URN spellings (exact):
-  - `urn:ietf:params:oauth:grant-type:token-exchange`
-  - `urn:ietf:params:oauth:grant-type:jwt-bearer`
-  - `urn:ietf:params:oauth:token-type:id_token` (underscore)
+  - `urn:ietf:params:oauth:grant-type:token-exchange` (Steps 0b + 1)
+  - `urn:ietf:params:oauth:grant-type:jwt-bearer` (Step 2)
+  - `urn:ietf:params:oauth:token-type:refresh_token` (Step 1 subject)
+  - `urn:ietf:params:oauth:token-type:saml2` (Step 0b subject)
+  - `urn:ietf:params:oauth:token-type:id_token` (underscore; v2 pattern)
   - `urn:ietf:params:oauth:token-type:id-jag` (hyphen)
 - Redact tokens/secrets/assertions/jags/jwts in logs:
   `<head 8>…<tail 8>` (>16 char) or `***` (≤16 char). Match keys with
-  `/(token|secret|assertion|jag|jwt)/i`.
+  `/(token|secret|assertion|jag|jwt)/i`. **`SAMLResponse` does not match
+  that regex** — handle it explicitly. `sub_id` is not a secret.
 - Tagged-union error shape: `{ok: true, …} | {ok: false, error:
   ErrorCode, …}`. `ok` is a literal, not a bool.
 
@@ -41,19 +86,35 @@ loop. Then read in order:
 `https://idp.xaa.dev`, `https://auth.resource.xaa.dev`,
 `https://api.resource.xaa.dev` — never substitute these hostnames.
 
+Discovery gotchas: the IdP has **no** `oauth-authorization-server`
+document (404) — use `openid-configuration`. The resource auth server
+has both, but only `oauth-authorization-server` carries
+`authorization_grant_profiles_supported` — use that one.
+
+Lifetimes: ID Token ~10 min, ID-JAG 5 min (30 s `iat` skew), access
+token ~2 h, refresh token **undocumented**. No revocation endpoint.
+
 ## Execution discipline
 
-- Walk numbered steps `01 → 02 → 03 → 04 → 05 → 07` in order.
+- Walk numbered steps `01 → 02 → 03 → 04 → 05 → 07` in order. Step `02`
+  is `02-user-login.md` and contains both paths, branched.
 - Hard stop after each step's Verification — wait for "continue."
 - `06-debugging-playbook.md` is reference, not a step; consult only on
-  failure.
-- Never modify files inside `hackathon-kit/` — it is read-only spec.
+  failure. D-14…D-16 are SAML, D-6/D-7/D-12 are OIDC, D-17…D-19 cover
+  refresh tokens, clock skew, and retry storms.
+- Never modify files inside `hackathon-kit/` — it is read-only spec when
+  building against it.
 - Never commit `.env.local`, `keys/`, `*.pem`, `*.key`.
 - Never invent libraries, env-var names, scopes, or URN strings.
+- Never fill in a `TODO(confirm)` with a guess — ask.
+- Never invent a refresh-token lifetime. No countdown timers or
+  proactive-refresh schedulers keyed to a made-up TTL.
 - Never use `--no-verify`, swallow 401s as 200s, or widen type unions
   to silence narrowing.
+- Never retry-loop a rejected refresh token.
 
-## Stack lock-in
+## Stack and path lock-in
 
-Once the dev picks a stack, commit to it for the entire session — no
-silent drift between Python and Node.
+Once the dev picks a stack and a protocol path, commit to both for the
+entire session — no silent drift between Python and Node, and none
+between OIDC and SAML.

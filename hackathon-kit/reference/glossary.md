@@ -11,7 +11,8 @@ done OAuth/OIDC before, skim. If not, read once before starting.
 - **Requesting App** — what you're building. Acts on behalf of the user
   to call a protected resource.
 - **IdP (Identity Provider)** — `https://idp.xaa.dev`. Authenticates
-  the user, issues ID Tokens, mints ID-JAGs.
+  the user, issues Identity Assertions and refresh tokens, mints
+  ID-JAGs. Speaks both OIDC and SAML 2.0.
 - **Resource auth server** — `https://auth.resource.xaa.dev`. Validates
   an ID-JAG and mints resource access tokens.
 - **Resource server** — `https://api.resource.xaa.dev` (default Todo0).
@@ -19,24 +20,46 @@ done OAuth/OIDC before, skim. If not, read once before starting.
 - **OAuth client** — a registered identity at an authorization domain.
   This kit uses **two** clients per developer: one at the IdP
   (`CLIENT_*`), one at the resource auth server (`RESOURCE_CLIENT_*`).
+- **SP (Service Provider)** — *SAML path only.* Your app, in SAML's
+  vocabulary. Registered at xaa.dev with an entityID and an ACS URL.
 
 ---
 
 ## Tokens
 
-- **ID Token** — a JWT issued by the IdP that proves *who* the user
-  is. Contains `sub`, `email`, `name`, `nonce`, etc. Stays
-  server-side, never reaches the browser. Long-lived (≈1 h).
+- **Identity Assertion** — the umbrella term for what the IdP issues to
+  prove *who* the user is: an **ID Token** on the OIDC path, a **SAML
+  assertion** on the SAML path. Used once, early, to obtain a refresh
+  token. Stays server-side.
+- **ID Token** — a JWT issued by the IdP. Contains `sub`, `email`,
+  `name`, `nonce`, etc. Lifetime on xaa.dev is **~10 minutes**, and
+  xaa.dev's docs describe it as *"only good for one exchange right after
+  login."* **Not a session anchor** — verify its `nonce`, read its
+  claims, then stop depending on it.
+- **SAML assertion** — the `<saml:Assertion>` element inside a
+  `SAMLResponse`. The SAML path's Identity Assertion. Exchanged once at
+  Step 0b for a refresh token, then discarded.
+- **Refresh token** — **the session anchor in this kit.** Issued by the
+  **IdP** when `offline_access` is requested (OIDC path: at the Step 0
+  token call; SAML path: as the output of Step 0b). Presented as the
+  `subject_token` on every Step 1 exchange to mint a fresh ID-JAG,
+  without re-authenticating the user. Not consumed by that exchange —
+  reusable until it expires or is revoked. This is the long-lived
+  credential in your session; treat it accordingly.
 - **Access token (resource)** — a bearer token issued by the resource
   auth server (Step 2). Used in `Authorization: Bearer …` to call the
-  resource API. Short-lived. Re-mint per call.
-- **Refresh token** — not used in this kit. xaa.dev's resource client
-  doesn't typically issue them; if yours does, ignore them and re-mint
-  from the ID Token.
-- **ID-JAG (ID-Token JWT-Assertion-Grant)** — the *delegation
-  assertion* the IdP mints in Step 1. A signed JWT that says "user U
-  delegates access to resource R via auth server A". Treat as opaque
-  on the client side; the resource auth server validates it in Step 2.
+  resource API. ~2 h on xaa.dev. Re-mint per call; don't persist.
+- **ID-JAG (Identity Assertion JWT Authorization Grant)** — the
+  *delegation assertion* the IdP mints in Step 1. A signed JWT that says
+  "user U delegates access to resource R via auth server A". Header `typ`
+  is `oauth-id-jag+jwt`. 5 min lifetime, may be single-use. Treat as
+  opaque on the client side; the resource auth server validates it.
+
+> **There is no resource-side refresh token.** The resource auth server
+> does not issue one at Step 2, by design — draft-04 § 4.4.3 says it
+> SHOULD NOT, because *"the ID-JAG replaces the use of Refresh Token for
+> the Resource Authorization Server."* When your access token expires,
+> mint a new ID-JAG from your IdP refresh token.
 
 ---
 
@@ -50,21 +73,36 @@ done OAuth/OIDC before, skim. If not, read once before starting.
 - **`scope`** — space-separated permissions the user grants. Must be a
   subset of what the resource registered (`todos.read` for Todo0
   default).
+- **`offline_access`** — the scope that makes the IdP issue a refresh
+  token. Required on Step 0 (OIDC) / Step 0b (SAML). Omit it and you
+  have no session anchor.
 - **`claims`** — the JSON fields inside a JWT (e.g. `sub`, `email`,
   `exp`, `nonce`).
-- **`grant_type`** — what kind of token exchange this is. Step 1 uses
-  `urn:ietf:params:oauth:grant-type:token-exchange`; Step 2 uses
+- **`grant_type`** — what kind of token exchange this is. Steps 0b and 1
+  use `urn:ietf:params:oauth:grant-type:token-exchange`; Step 2 uses
   `urn:ietf:params:oauth:grant-type:jwt-bearer`. URNs are
   case-sensitive and hyphenated — see `06-debugging-playbook.md` § D-3.
 - **`subject_token` / `subject_token_type`** — the input token to a
-  Step-1 exchange (the ID Token) and its type URN
-  (`…token-type:id_token`, with underscore).
-- **`requested_token_type`** — what to mint in Step 1
-  (`…token-type:id-jag`, with hyphen).
+  token exchange and its type URN. xaa.dev accepts three types:
+  `…token-type:id_token` (underscore), `…token-type:saml2`, and
+  `…token-type:refresh_token`. **This kit uses `refresh_token` on
+  Step 1** and `saml2` on Step 0b.
+- **`requested_token_type`** — what to mint.
+  `…token-type:refresh_token` on Step 0b; `…token-type:id-jag` (hyphen)
+  on Step 1.
+- **`sub_id`** — RFC 9493 Subject Identifier, present on SAML-derived
+  ID-JAGs. See below.
+- **`saml-nameid`** — the `sub_id` format that carries a SAML
+  `<NameID>`. Members: `format`, `issuer`, `nameid` (required);
+  `nameid_format`, `name_qualifier`, `sp_name_qualifier`,
+  `sp_provided_id` (optional, included exactly when present on the
+  `<NameID>`). New in draft-04.
 
 ---
 
 ## Crypto / OIDC machinery
+
+*OIDC path only.*
 
 - **PKCE** — RFC 7636. Adds a `code_verifier` (server-secret) +
   `code_challenge` (sent to IdP) so an intercepted auth code can't be
@@ -80,26 +118,70 @@ done OAuth/OIDC before, skim. If not, read once before starting.
   `/.well-known/openid-configuration` (IdP) or
   `/.well-known/oauth-authorization-server` (resource auth server)
   endpoint that lists `authorization_endpoint`, `token_endpoint`,
-  `jwks_uri`, supported algorithms, etc.
+  `jwks_uri`, supported algorithms, etc. On the resource auth server the
+  two URLs differ by one field — see `xaa-spec.md` § Discovery.
+
+---
+
+## SAML machinery
+
+*SAML path only.* These are the SAML counterparts to the OIDC machinery
+above — same jobs, different mechanisms.
+
+- **`<AuthnRequest>`** — what your SP sends to the IdP's SSO endpoint to
+  start login. xaa.dev sets `WantAuthnRequestsSigned="false"`, so you
+  need no SP signing key to send one.
+- **`RelayState`** — SAML's opaque round-trip parameter. Carry your CSRF
+  / transaction token here. **The SAML analogue of OIDC `state`.**
+- **`InResponseTo`** — the `SAMLResponse` attribute echoing your
+  `<AuthnRequest>` ID. Verify it. **The closest analogue of `nonce`.**
+- **ACS (Assertion Consumer Service)** — the endpoint on *your* app that
+  receives the `SAMLResponse` via HTTP-POST. SAML's callback URL.
+- **`<NameID>`** — the assertion's subject identifier. xaa.dev offers
+  `emailAddress` (recommended) and `persistent` formats; **`transient`
+  is unsupported** because the resource server keys users by NameID and
+  a per-session random value would create a new user every login.
+- **`SPNameQualifier`** — scopes a `<NameID>` to one Service Provider.
+  When present it is **part of the subject namespace**: the same
+  `nameid` under two different qualifiers is two different users.
+  Surfaces as `sp_name_qualifier` in `sub_id`.
+- **`AudienceRestriction`** — the assertion condition naming which SP
+  may consume it. Verify it names your entityID. **The analogue of
+  checking `aud`.**
+- **SAML IdP metadata** — `https://idp.xaa.dev/saml/metadata`. The XML
+  document carrying the IdP's entityID, signing certificate, and
+  endpoint bindings. **The analogue of OIDC discovery.**
 
 ---
 
 ## XAA-specific
 
-- **Cross-App Access (XAA)** — the umbrella name for the two-grant
-  flow this kit implements. RFC 8693 Token Exchange (Step 1) +
-  RFC 7523 JWT-Bearer Grant (Step 2).
-- **Step 0** — OIDC Authorization Code + PKCE login. Yields an ID
-  Token in the session.
-- **Step 1** — ID Token → ID-JAG (RFC 8693, at the IdP).
+- **Cross-App Access (XAA)** — the umbrella name for the delegation flow
+  this kit implements. RFC 8693 Token Exchange (Steps 0b + 1) +
+  RFC 7523 JWT-Bearer Grant (Step 2), per
+  `draft-ietf-oauth-identity-assertion-authz-grant-04`.
+- **Step 0** — user login. OIDC Authorization Code + PKCE, *or* SAML
+  SP-initiated Web Browser SSO. Yields an Identity Assertion, and on the
+  OIDC path a refresh token too.
+- **Step 0b** — *SAML path only.* SAML assertion → refresh token
+  (RFC 8693, at the IdP). The OIDC path skips this; its refresh token
+  arrives in Step 0.
+- **Step 1** — refresh token → ID-JAG (RFC 8693, at the IdP).
 - **Step 2** — ID-JAG → resource access token (RFC 7523, at the
   resource auth server).
 - **Step 3** — call the resource API with the access token (RFC 6750
   Bearer).
+- **Session anchor** — the credential your session is built on, which in
+  this kit is the **refresh token**. Everything downstream is re-minted
+  from it per call.
 - **BYOR (Bring Your Own Resource)** — registering a custom resource
   at xaa.dev instead of using Todo0. Overrides
   `RESOURCE_URL/PATH/SCOPES` only; discovery and login still go
   through the fixed IdP.
+
+> **Step numbering differs from xaa.dev's docs.** This kit's Step 1 is
+> xaa.dev's "Step 2", and so on — off by one throughout. Mapping table
+> in `xaa-spec.md` § Step numbering.
 
 ---
 
@@ -110,10 +192,10 @@ Each requires its own client registration. This is what makes XAA a
 *delegated* pattern: the IdP can mint a delegation assertion for any
 resource without itself controlling that resource's access policy.
 
-| Pair                   | Authenticates at                       | For      |
-| ---------------------- | -------------------------------------- | -------- |
-| `CLIENT_*`             | `https://idp.xaa.dev/token`            | Step 0 + Step 1 |
-| `RESOURCE_CLIENT_*`    | `https://auth.resource.xaa.dev/token`  | Step 2          |
+| Pair                   | Authenticates at                       | For                      |
+| ---------------------- | -------------------------------------- | ------------------------ |
+| `CLIENT_*`             | `https://idp.xaa.dev/token`            | Steps 0, 0b, 1           |
+| `RESOURCE_CLIENT_*`    | `https://auth.resource.xaa.dev/token`  | Step 2                   |
 
 Mixing them is the most common cause of opaque `invalid_client`
 failures. See `06-debugging-playbook.md` § D-2.

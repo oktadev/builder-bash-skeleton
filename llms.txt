@@ -1,39 +1,60 @@
-# XAA Hackathon Kit
+# XAA Hackathon Kit (v3)
 
 > A spec-first prompt kit for building a Cross-App Access (XAA)
 > Requesting App against the public xaa.dev playground — in any
-> language or framework. Implements OIDC + PKCE login, RFC 8693 token
-> exchange, RFC 7523 jwt-bearer, and RFC 6750 bearer error mapping.
+> language or framework. Two protocol paths (OIDC + PKCE, or SAML 2.0
+> Web Browser SSO) converging on an IdP refresh token as the session
+> anchor, then RFC 8693 token exchange to an ID-JAG, RFC 7523
+> jwt-bearer to an access token, and RFC 6750 bearer error mapping.
 
 The kit at `hackathon-kit/` is the authoritative spec. AI coding agents
 should start at `hackathon-kit/IGNITION.md`. The three target hosts are
 fixed: `https://idp.xaa.dev`, `https://auth.resource.xaa.dev`,
 `https://api.resource.xaa.dev`.
 
+Two things define v3 and are easy to get wrong from prior knowledge:
+
+1. **The IdP refresh token is the session anchor**, requested via
+   `offline_access` and presented as `subject_token` (type
+   `urn:ietf:params:oauth:token-type:refresh_token`) on every ID-JAG
+   exchange. The ID Token lives ~10 minutes and is *not* the anchor.
+   The resource authorization server issues **no** refresh token, by
+   design.
+2. **Two login paths.** OIDC (Authorization Code + PKCE) or SAML 2.0
+   (SP-initiated SSO, then an extra Step 0b exchanging the assertion for
+   a refresh token). They diverge only at Step 0/0b; everything from
+   Step 1 onward is identical.
+
+Note the kit's step numbering is offset by one from xaa.dev's own docs —
+this kit's Step 1 is their "Step 2". Mapping table in
+`hackathon-kit/reference/xaa-spec.md`.
+
 ## Entry points
 
-- [IGNITION.md](hackathon-kit/IGNITION.md): Paste-into-agent runbook for Codex / Claude Code / Cursor / Aider with filesystem access.
+- [IGNITION.md](hackathon-kit/IGNITION.md): Paste-into-agent runbook for Codex / Claude Code / Cursor / Aider with filesystem access. Opens with the protocol gate.
 - [Chat-only ignition](hackathon-kit/ignition/chat-only.md): Copy-paste ignition flow for ChatGPT browser and tools without filesystem access.
-- [README.md](hackathon-kit/README.md): Developer help doc — what you can build with the kit, the stack picker, and Day-0 checklist.
+- [README.md](README.md): Developer help doc (repo root) — what you can build with the kit, protocol choice, the stack picker, and Day-0 checklist.
 - [Task brief (00)](hackathon-kit/00-brief.md): The "what we're building" spec for the AI's first context message.
+- [CHANGELOG.md](CHANGELOG.md): Version history.
+- [Migration v2 → v3](hackathon-kit/MIGRATION-v2-to-v3.md): For anyone with a working OIDC-only v2 build.
 
 ## Numbered prompts (execute in order)
 
-- [01 — Project skeleton](hackathon-kit/01-project-skeleton.md): Stack scaffold, env config, session adapter, logger.
-- [02 — OIDC login](hackathon-kit/02-oidc-login.md): Authorization Code + PKCE S256, state + nonce, server-side session.
-- [03 — Token exchange](hackathon-kit/03-token-exchange.md): RFC 8693 token-exchange to ID-JAG, then RFC 7523 jwt-bearer to access token.
-- [04 — Protected resource call](hackathon-kit/04-protected-resource-call.md): Bearer call + WWW-Authenticate decoding + ErrorCode mapping.
-- [05 — UI and observability](hackathon-kit/05-ui-and-observability.md): Dashboard, redacted token surface, request timeline.
-- [06 — Debugging playbook](hackathon-kit/06-debugging-playbook.md): Thirteen failure shapes with diagnostic prompts (reference, not a step).
-- [07 — Testing](hackathon-kit/07-testing.md): T1–T5 hermetic + B1–B9 smoke + E1–E5 manual scenarios.
+- [01 — Project skeleton](hackathon-kit/01-project-skeleton.md): Stack scaffold, env config, session adapter, logger, refresh-token storage guidance.
+- [02 — User login](hackathon-kit/02-user-login.md): Branched. OIDC: Authorization Code + PKCE S256, state + nonce, `offline_access`. SAML: SP-initiated SSO, RelayState/InResponseTo/audience checks, then Step 0b (`saml2` → `refresh_token`).
+- [03 — Token exchange](hackathon-kit/03-token-exchange.md): RFC 8693 token-exchange from the refresh token to an ID-JAG, then RFC 7523 jwt-bearer to an access token. Path-neutral.
+- [04 — Protected resource call](hackathon-kit/04-protected-resource-call.md): Bearer call + WWW-Authenticate decoding + ErrorCode mapping + the re-mint-vs-re-authenticate rule.
+- [05 — UI and observability](hackathon-kit/05-ui-and-observability.md): Dashboard, redacted token surface, `sub`/`sub_id` rendering, request timeline.
+- [06 — Debugging playbook](hackathon-kit/06-debugging-playbook.md): Nineteen failure shapes with diagnostic prompts, marked by path (reference, not a step).
+- [07 — Testing](hackathon-kit/07-testing.md): Hermetic rows + 9 smoke probes + E1–E7 manual scenarios.
 
 ## Reference
 
-- [Glossary](hackathon-kit/reference/glossary.md): Terminology anchors — Identities, Tokens, Wire-format pieces, XAA-specific terms.
-- [Env vars](hackathon-kit/reference/env-vars.md): Three fixed hosts + nine per-developer credentials, with registration walkthrough.
-- [XAA spec](hackathon-kit/reference/xaa-spec.md): Canonical wire format for both grants — exact form fields, audience semantics.
-- [Error mapping](hackathon-kit/reference/error-mapping.md): ErrorCode set + WWW-Authenticate + token-exchange decoding tables.
-- [Architecture](hackathon-kit/reference/architecture.md): Flow diagrams for the four hops and the two-client pattern.
+- [Glossary](hackathon-kit/reference/glossary.md): Terminology anchors — identities, tokens, wire-format pieces, OIDC and SAML machinery side by side, XAA-specific terms.
+- [Env vars](hackathon-kit/reference/env-vars.md): Fixed hosts, `XAA_PROTOCOL`, per-developer credentials, and the branched OIDC/SAML registration walkthrough.
+- [XAA spec](hackathon-kit/reference/xaa-spec.md): Canonical wire format for every grant — exact form fields, discovery metadata, token lifetimes, ID-JAG structure, `sub`/`sub_id`.
+- [Error mapping](hackathon-kit/reference/error-mapping.md): ErrorCode set + WWW-Authenticate + token-exchange decoding tables, and the two faces of `expired_token`.
+- [Architecture](hackathon-kit/reference/architecture.md): Flow diagrams for both login paths, the convergence point, and the token lifecycle.
 
 ## Repo-root agent files
 
