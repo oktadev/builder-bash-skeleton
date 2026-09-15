@@ -39,6 +39,13 @@ FACTS=(
   'RESOURCE_CLIENT_SECRET' 'RESOURCE_PATH' 'RESOURCE_SCOPES' 'RESOURCE_URL'
   'MCP_SERVER_URL' 'MCP_PROTOCOL_VERSION' 'REDIRECT_URI' 'SAML_ACS_URL'
   'SAML_NAMEID_FORMAT' 'SESSION_SECRET' 'APP_URL' 'IDP_URL' 'AUTH_SERVER_URL'
+  'SAML_SP_ENTITY_ID' 'MCP_RESOURCE'
+  # v4 review fixes — each of these closed a defect; losing one reopens it
+  'Reference URI' 'McpSdkOAuthAttempt' 'iron-session' 'securecookie' 'Fernet'
+  'Sec-Fetch-Site' 'SubjectConfirmationData' 'Recipient' 'signed only' 'replay'
+  'Signed ≠ encrypted' 'SessionMiddleware' 'itsdangerous'
+  'Any other 4xx' 'remintedAfterExpiry' 'tokenState' 'LogEntry'
+  'D-24' 'D-27' 'D-28' 'T9.1' 'T7.2'
   # error taxonomy
   'unauthorized' 'invalid_token' 'expired_token' 'insufficient_scope'
   'resource_failure' 'token_exchange_failure' 'config_error' 'unknown'

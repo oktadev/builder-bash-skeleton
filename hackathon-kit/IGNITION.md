@@ -63,7 +63,7 @@ later session resumes on the same path instead of re-asking.
 
 - **`SPEC.md` is the source of truth** for wire format, error codes, and env
   var names. Never invent a library, env var, scope, or URN string — ask.
-- **Never fill in a `TODO(confirm)`.** SPEC § Unverified collects all nine;
+- **Never fill in a `TODO(confirm)`.** SPEC § Unverified collects all ten;
   each means stop and ask me.
 - **Never invent a refresh-token lifetime.** xaa.dev documents none.
 - **Never retry a rejected refresh token** — it can't be repaired, that's a
@@ -71,7 +71,7 @@ later session resumes on the same path instead of re-asking.
   rule most builds get wrong.
 - **`hackathon-kit/` is read-only** — the spec, not output. And never commit
   `.env.local`, `keys/`, `*.pem`, `*.key`.
-- On failure check `hackathon-kit/DEBUG.md` (23 shapes, indexed by path)
+- On failure check `hackathon-kit/DEBUG.md` (28 shapes, indexed by path)
   before improvising. After ~5 failed attempts on one issue, stop and report.
 
 **First action: ask the three questions. Nothing else.**

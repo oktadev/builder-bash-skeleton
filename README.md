@@ -25,9 +25,9 @@ stop, after login, because that needs your browser.
 | `XAA_PROTOCOL` — how you log in | `oidc` (Auth Code + PKCE) · `saml` (SP-initiated SSO + one extra exchange) | **`oidc`** |
 | `APP_TYPE` — what you do with the token | `standalone` (REST + Bearer) · `mcp` (official MCP SDK, adds a dependency and a fourth host) | **`standalone`** |
 
-The two axes branch in different places and never interact, so all four
-combinations are one build with two swaps. **No constraint? `oidc` +
-`standalone`.**
+The two axes branch in different places, so all four combinations are one build
+with two swaps — they meet only in the requested scope list. **No constraint?
+`oidc` + `standalone`.**
 
 ## Day 0 — before you start
 
@@ -37,7 +37,7 @@ combinations are one build with two swaps. **No constraint? `oidc` +
 | `openssl` — generates `SESSION_SECRET` | `openssl version` |
 | `curl` — the kit's verification probes | `curl --version` |
 | **Accurate clock** — xaa.dev allows only **30 s** of skew on the ID-JAG's `iat`; drift breaks Step 2 with an error that looks like a code bug | `date -u` vs any NTP source |
-| Free port — default `APP_URL=http://localhost:3000` | `lsof -i :3000` |
+| Free port — `APP_URL` is the source of truth, default 3000. Bind elsewhere (uvicorn defaults to 8000) and you get `redirect_uri_mismatch`. Changing it means **re-registering** at xaa.dev. | `lsof -i :3000` |
 | `.env.local` — `cp .env.example .env.local`, then fill it in | `test -f .env.local` |
 | xaa.dev account with **two** client pairs + your callback URI, registered on the **OIDC or SAML tab** matching your path | <https://xaa.dev/developer/register> |
 
@@ -48,27 +48,37 @@ Registration walkthrough and the full env contract are in
 
 Library-agnostic, but you'll move faster with known-good defaults:
 
-| Language | Framework | OIDC client | SAML *(saml only)* | MCP SDK *(mcp only)* | Tests |
-| --- | --- | --- | --- | --- | --- |
-| **Python** | FastAPI | `authlib` | `python3-saml` / `pysaml2` | **`mcp`** | `pytest` |
-| **Node/TS** | Express / Fastify / Next.js | `openid-client@6` | `@node-saml/node-saml` | **`@modelcontextprotocol/sdk`** | `vitest` |
-| **Go** | `chi` / Gin | `coreos/go-oidc` | `crewjam/saml` | see note | `go test` |
-| **Rust** | Axum | `openidconnect` | `samael` | see note | `cargo test` |
-| **Java/Kotlin** | Spring Boot | `spring-security-oauth2-client` | `spring-security-saml2-service-provider` | see note | JUnit 5 |
-| **Ruby** | Rails / Sinatra | `omniauth_openid_connect` | `ruby-saml` | see note | RSpec |
-| **.NET** | ASP.NET Core | `Microsoft.AspNetCore.Authentication.OpenIdConnect` | `Sustainsys.Saml2` | see note | xUnit |
+| Language | Framework | OIDC client | SAML *(saml only)* | MCP SDK *(mcp only)* | **Session (must encrypt)** | Tests |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Python** | FastAPI | `authlib` / `oic` | `python3-saml` / `pysaml2` | **`mcp`** | Redis / SQLite store, or `cryptography` Fernet | `pytest` + `respx` |
+| **Node/TS** | Express / Fastify / Next.js | `openid-client@6` | `@node-saml/node-saml` | **`@modelcontextprotocol/sdk`** *(pin it)* | `iron-session` (encrypts) | `vitest` + `msw` |
+| **Go** | `chi` / Gin | `coreos/go-oidc` | `crewjam/saml` | see note | `gorilla/securecookie` **with a block key** | `go test` + `httptest` |
+| **Rust** | Axum | `openidconnect` | `samael` | see note | `tower-sessions` + a store | `cargo test` (+ `serial_test` for env races) |
+| **Java/Kotlin** | Spring Boot | `spring-security-oauth2-client` | `spring-security-saml2-service-provider` | see note | Spring Session (server-side) | JUnit 5 + WireMock |
+| **Ruby** | Rails / Sinatra | `omniauth_openid_connect` | `ruby-saml` | see note | Rails `:active_record_store` | RSpec + WebMock |
+| **.NET** | ASP.NET Core | `…Authentication.OpenIdConnect` | `Sustainsys.Saml2` | see note | Data Protection–backed session | xUnit |
 
 Anything that speaks HTTPS, parses JSON, can SHA-256 + base64url, and sets an
-httpOnly cookie will work. Two library choices aren't free: on `saml` use a
-maintained library for signature verification (XML-DSIG signature-wrapping and
-XXE are live risks), and on `mcp` use the **official** SDK — see
-<https://modelcontextprotocol.io> for languages not listed above.
+httpOnly cookie will work. Three choices aren't free:
+
+- **Sessions must be *encrypted*, not merely signed.** The common defaults —
+  Starlette `SessionMiddleware`, `itsdangerous`, `gorilla/sessions` without a
+  block key, Rails' cookie store — are signed only, so the refresh token ends up
+  base64-readable in the cookie. That passes every test in this kit and still
+  leaks the credential the whole design is built on. See `SPEC.md` § Invariants 3.
+- **On `saml`, use a maintained library for signature verification** — XML-DSIG
+  signature-wrapping and XXE are live risks — and set an explicit clock-skew
+  allowance, since several libraries default to zero.
+- **On `mcp`, use the *official* SDK and pin the version.** The kit's snippet is
+  written against `@modelcontextprotocol/sdk@1.30.0`, whose `OAuthClientProvider`
+  has eight members; a newer major may change that shape. See
+  <https://modelcontextprotocol.io> for languages not listed.
 
 ## Layout
 
 Four kit files: **`IGNITION.md`** (entry point — paste this), **`SPEC.md`** (the
 only reference: hosts, wire format, env, errors, invariants), **`BUILD.md`**
-(six phases, one stop), **`DEBUG.md`** (23 failure shapes). At the root:
+(six phases, one stop), **`DEBUG.md`** (28 failure shapes). At the root:
 `AGENTS.md` (agent digest, ~20 tools auto-load it), `CLAUDE.md` (thin import of
 it), `.env.example`. `hackathon-kit/` is the spec — read-only while building.
 

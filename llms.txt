@@ -24,9 +24,9 @@ from xaa.dev's docs — this kit's Step 1 is their "Step 2".
 ## The kit
 
 - [IGNITION.md](hackathon-kit/IGNITION.md): Entry point — paste into your agent. Asks protocol, app type and stack, then runs a six-phase build with one stop after login. Appendix covers chat-only tools without filesystem access.
-- [SPEC.md](hackathon-kit/SPEC.md): The only reference. Hosts and discovery quirks, exact wire format for Steps 0/0b/1/2/3, URN strings, token lifetimes, ID-JAG structure and `sub`/`sub_id`, the eight-value ErrorCode set and decoding tables, redaction, the env contract, invariants, and all nine `TODO(confirm)` items.
+- [SPEC.md](hackathon-kit/SPEC.md): The only reference. Hosts and discovery quirks, exact wire format for Steps 0/0b/1/2/3, URN strings, token lifetimes, ID-JAG structure and `sub`/`sub_id`, the eight-value ErrorCode set and decoding tables, redaction, the env contract, invariants, and all ten `TODO(confirm)` items.
 - [BUILD.md](hackathon-kit/BUILD.md): Six phases — scaffold, login, exchange, call, UI, tests — with required surfaces, the hermetic test matrix, nine smoke probes, and the E1–E8 end-to-end scenarios.
-- [DEBUG.md](hackathon-kit/DEBUG.md): Twenty-three failure shapes indexed by path, plus curl recipes that isolate a client bug from a server or registration bug.
+- [DEBUG.md](hackathon-kit/DEBUG.md): Twenty-eight failure shapes indexed by path, plus curl recipes that isolate a client bug from a server or registration bug.
 
 ## Repo root
 

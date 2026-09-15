@@ -25,9 +25,9 @@ that first; don't pre-read the kit.
 | File | What it's for |
 | --- | --- |
 | `hackathon-kit/IGNITION.md` | Entry point: the three questions, the build loop |
-| `hackathon-kit/SPEC.md` | **The only reference.** Hosts, wire format for every step, URNs, env contract, ErrorCode set, invariants, all nine `TODO(confirm)` |
+| `hackathon-kit/SPEC.md` | **The only reference.** Hosts, wire format for every step, URNs, env contract, ErrorCode set, invariants, all ten `TODO(confirm)` |
 | `hackathon-kit/BUILD.md` | Six build phases. **One stop, after login.** |
-| `hackathon-kit/DEBUG.md` | 23 failure shapes, indexed by path |
+| `hackathon-kit/DEBUG.md` | 28 failure shapes, indexed by path |
 
 Never mix protocol paths or app types in one session. `### ▸ …` sections are
 alternatives; `> **… only.**` blocks are skippable when they aren't yours.
