@@ -8,6 +8,8 @@
 >
 > **Kit version: v3.** New since v2: two protocol paths (OIDC and SAML),
 > and the IdP refresh token as the session anchor.
+> **This build is OIDC only.** The kit supports SAML too, but it isn't
+> in scope here — don't ask about it, don't offer it.
 
 ---
 
@@ -28,9 +30,10 @@ and ask me rather than filling in a plausible value.
 
 This repo's agent digest is `AGENTS.md` (the
 [agents.md](https://agents.md) standard, read by most agents; `CLAUDE.md`
-imports it). Append a short note there capturing my protocol choice
+imports it). Append a short note there capturing my app-type choice
 (§ 2 below) and stack choice (§ 3) so future sessions resume on the same
-path instead of re-asking.
+path instead of re-asking. Protocol is fixed to OIDC for this build —
+no choice to record.
 
 ## 1. Pre-flight (do this before any code)
 
@@ -60,26 +63,17 @@ attempt to fix it yourself.
    `README.md` (language runtime, `openssl`, `curl`, free port). Report
    any gaps; stop if fundamentals are missing.
 
-## 2. Two decisions (ask me both before anything else)
+## 2. Protocol is fixed — one decision to ask
 
-Ask both of these before the stack question. They're independent, and
-each is one short question.
+This build is **OIDC only** — Authorization Code + PKCE login, plus
+`offline_access` for the refresh token. Set `XAA_PROTOCOL=oidc` in
+`.env.local` yourself. **Do not ask me to choose a protocol, and do not
+offer, implement, or read the SAML path** — the kit has one, it isn't
+in scope for this build.
 
-**2a — protocol path:**
+Ask me the one decision that's still mine, before the stack question:
 
-> "Which XAA protocol path — **OIDC** or **SAML**?
->
-> - **OIDC** (default, recommended): Authorization Code + PKCE login.
->   Pick this unless you have a specific reason not to. Fewer moving
->   parts, and it's the path xaa.dev's own docs cover.
-> - **SAML**: SP-initiated SAML 2.0 Web Browser SSO, then one extra
->   exchange (Step 0b) to trade the assertion for a refresh token.
->   Pick this if you're modelling an app whose IdP integration is
->   already SAML, or you specifically want to exercise the SAML path.
->
-> If you have no constraint, say OIDC."
-
-**2b — application type:**
+**Application type:**
 
 > "Which application type — **standalone** or **MCP client**?
 >
@@ -92,22 +86,8 @@ each is one short question.
 >
 > If you have no constraint, say standalone."
 
-Set `XAA_PROTOCOL` and `APP_TYPE` in `.env.local` to match, and **commit
-to both for the rest of the session.**
-
-### Why this is two forks and not four builds
-
-The axes touch different parts of the flow and never interact:
-
-```
-                 Step 0 / 0b      Step 1        Step 2      Step 3
-  XAA_PROTOCOL   OIDC │ SAML      shared        shared      shared
-  APP_TYPE       shared           scopes only   shared      Standalone │ MCP
-```
-
-`XAA_PROTOCOL` changes how the refresh token is obtained. `APP_TYPE`
-changes what the access token is used for. There is no combined
-`SAML + MCP` variant to learn — it's the SAML Step 0 plus the MCP Step 3.
+Set `APP_TYPE` in `.env.local` to match, and **commit to it for the
+rest of the session.**
 
 ### The division of labour in MCP mode
 
@@ -125,15 +105,17 @@ protocol handling, and do not let the SDK acquire its own token — see
 
 ### Branch markers
 
-- `### ▸ OIDC path` / `### ▸ SAML path` — do the one that matches.
-- `### ▸ Step 3a — standalone` / `### ▸ Step 3b — MCP client` — likewise.
-- `> **SAML path only.**` / `> **APP_TYPE=mcp only.**` etc. — skip if it
-  isn't yours.
+- `### ▸ OIDC path` — the only protocol branch you should ever read.
+  Skip every `### ▸ SAML path` section entirely, in every kit file.
+- `### ▸ Step 3a — standalone` / `### ▸ Step 3b — MCP client` — do the
+  one that matches my app-type answer.
+- `> **SAML path only.**` — always skip. `> **APP_TYPE=mcp only.**` —
+  skip unless I picked MCP.
 - Unmarked text applies to everyone.
 
-Do not implement both protocol paths or both app types. Do not read the
-other branch to "be thorough" — it wastes context and invites mixing
-them.
+Do not implement both app types. Do not read the SAML branches "to be
+thorough" — it wastes context and invites mixing SAML pieces into an
+OIDC build.
 
 ## 3. Stack decision (ask me once)
 
@@ -142,11 +124,7 @@ Show me the root `README.md` § Quick stack picker. Ask me:
 > "Which row from the stack picker should I use? (Or specify a custom
 > combination.)"
 
-If I chose SAML in § 2a, also confirm the SAML library for that stack —
-the picker has a column for it. Signature verification on a SAML
-assertion is not something to hand-roll.
-
-If I chose MCP in § 2b, the MCP SDK is **not** a free choice: use the
+If I chose MCP in § 2, the MCP SDK is **not** a free choice: use the
 official one for the language (`@modelcontextprotocol/sdk` for
 Node/TS, `mcp` for Python). Don't substitute a community client and
 don't write your own JSON-RPC layer.
@@ -162,12 +140,19 @@ For each of `01-project-skeleton.md`, `02-user-login.md`,
 `05-ui-and-observability.md`, `07-testing.md` — **in that order**:
 
 1. **Read** the file fully. Re-read referenced sections of
-   `reference/*.md` as needed. Follow only the branches for my chosen
-   protocol path.
+   `reference/*.md` as needed. Follow only the OIDC branches — this
+   build never touches SAML.
 2. **Implement** based on the Prompt section, applying the chosen
    stack's idioms. Stay within the file's scope — do not start the
    next numbered step yet.
-3. **Run** the Verification commands in your shell. Capture output.
+3. **Run the Verification commands.** **You never start or stop the dev
+   server yourself.** When a Verification block opens with a boot step
+   (e.g. "1. Boot"), tell me the exact command for my stack and pause:
+   > "Run this in your own terminal, then tell me it's up: `<command>`.
+   > When you're done for the session, stop it with Ctrl+C (or kill the
+   > process)."
+   Wait for my confirmation before running the rest of that block's
+   checks (curl, etc.) against it yourself.
 4. **Show me**:
    - the diff of files changed,
    - the verification command output,
@@ -187,16 +172,16 @@ can't immediately resolve:
 
 1. **First, consult `hackathon-kit/06-debugging-playbook.md`.** Match
    the symptom to a `D-N` entry. Apply the diagnostic prompt and
-   resolution. D-14 through D-19 are the SAML and refresh-token
-   entries; D-6, D-7, and D-12 are OIDC-only.
+   resolution. D-6, D-7, and D-12 are OIDC-only; D-17–D-19 are
+   refresh-token entries and apply here too. D-14–D-16 are SAML-only —
+   they shouldn't come up on this build.
 2. If the symptom isn't catalogued, run the curl recipe at the bottom
    of `06-debugging-playbook.md` § Generic diagnostic recipes to
    reproduce the failure on the wire. This isolates client bugs from
    server/registration bugs.
 3. Fix the root cause. **Do not bypass:**
    - no `--no-verify` on git commits,
-   - no skipping the state/nonce (OIDC) or `InResponseTo`/audience
-     (SAML) checks,
+   - no skipping the state/nonce checks,
    - no swallowing 401s as 200s,
    - no widening type unions to `any` to silence narrowing errors,
    - no retry loop on a rejected refresh token — that's a re-auth, not
@@ -245,9 +230,10 @@ return expected status codes):
 3. If E1 passes, capture the test output in `FINAL_VALIDATION.md` at
    the project root and stop.
 
-E2–E7 are documented in `07-testing.md`. E6 (refresh) and E7 (SAML
-end-to-end) are new in v3. Walk through them with me one at a time
-after E1 passes if they're part of my acceptance criteria.
+E2–E6 are documented in `07-testing.md`; E6 (refresh) is new in v3.
+Walk through them with me one at a time after E1 passes if they're part
+of my acceptance criteria. E7 (SAML end-to-end) doesn't apply — this
+build is OIDC only.
 
 ## 8. What you must not do
 
@@ -259,11 +245,12 @@ after E1 passes if they're part of my acceptance criteria.
 - Do not invent libraries, env-var names, scopes, or URN strings.
 - Do not fill in a `TODO(confirm)` with a guess — ask me.
 - Do not chain numbered steps to "save time."
-- Do not silently change the protocol path (§ 2) or the stack (§ 3) we
+- Do not implement the SAML path — `XAA_PROTOCOL=oidc` is fixed for
+  this build.
+- Do not silently change the app type (§ 2) or the stack (§ 3) we
   agreed on.
-- Do not implement both protocol paths.
 
 ---
 
-**First action:** complete § 1 pre-flight, then ask me the § 2 protocol
-question. Stop there.
+**First action:** complete § 1 pre-flight, then ask me the § 2
+application-type question. Stop there.

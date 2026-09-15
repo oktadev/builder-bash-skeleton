@@ -8,13 +8,14 @@
 [![ChatGPT](https://img.shields.io/badge/ChatGPT-chat--only-10A37F?logo=openai&logoColor=white)](https://chatgpt.com)
 [![Sourcegraph Cody](https://img.shields.io/badge/Cody-compatible-FF5543?logo=sourcegraph&logoColor=white)](https://sourcegraph.com/cody)
 
-> **Kit version: v3.** New since v2: two protocol paths (OIDC and SAML),
-> and the IdP refresh token as the session anchor.
+> **Kit version: v3.** New since v2: the IdP refresh token as the
+> session anchor. **This kit builds OIDC only** — SAML support has
+> been dropped.
 > **Status:** Tested against `xaa.dev` as of **2026-08-26**.
 > Targets: Cross-App Access (ID-JAG) draft-04, RFC 8693 (Token Exchange),
 > RFC 7523 (JWT-Bearer), RFC 7636 (PKCE), RFC 6750 (Bearer +
 > WWW-Authenticate), RFC 8414 (Auth Server Metadata), RFC 9493 (Subject
-> Identifiers), SAML 2.0 (Web Browser SSO).
+> Identifiers).
 
 A spec-first prompt kit for building a working **Cross-App Access (XAA)
 Requesting App** against the public [xaa.dev](https://xaa.dev) playground
@@ -25,13 +26,58 @@ follow without drifting.
 
 ---
 
+## Quick start
+
+1. **Copy the env template** — `cp .env.example .env.local`. Every
+   xaa.dev credential you get in step 2 goes into this file; it's
+   gitignored and never touched by the agent.
+2. **Register your app** at
+   [xaa.dev](https://xaa.dev/?have=requesting&want=register&via=oidc) and paste the client IDs/secrets it gives you
+   into `.env.local`. Make sure to sign-in in with a fake email. Full walkthrough:
+   `hackathon-kit/reference/env-vars.md` § Registration walkthrough.
+3. **Paste `hackathon-kit/IGNITION.md`** into your AI agent's first
+   message. It reads the rest of the kit itself and walks you through
+   the app-type and stack questions.
+4. **Start and stop the server yourself** — see *Running the app*
+   below. The agent tells you the command; it never runs or backgrounds
+   it for you.
+
+The *Day 0* and *Ignite the kit* sections below go into more detail on
+each of these if you get stuck.
+
+---
+
+## Running the app
+
+**The agent never starts or stops your dev server — that's always a
+command you run yourself, in your own terminal.** Once
+`01-project-skeleton.md` is scaffolded, your agent will tell you the
+exact boot command for your stack. It looks like one of these:
+
+| Stack            | Start command                                    |
+| ---------------- | ------------------------------------------------- |
+| Python / FastAPI | `uvicorn xaa_app.main:app --reload --port 3000`   |
+| Node / Express   | `npm run dev`                                     |
+| Go / chi         | `go run ./cmd/server`                             |
+| Rust / Axum      | `cargo run`                                       |
+| Java / Spring    | `./gradlew bootRun` (or `mvn spring-boot:run`)    |
+| Ruby / Rails     | `bin/rails server`                                |
+| .NET             | `dotnet run`                                      |
+
+Ask your agent for the exact command if your entrypoint differs from
+these defaults.
+
+**Stop** it the same way you'd stop any dev server: `Ctrl+C` in that
+terminal, or `kill <pid>` if you already backgrounded it.
+
+---
+
 ## What you'll build
 
 A small server-side web app that:
 
-1. Logs a user in at **`https://idp.xaa.dev`**, via **either** OIDC
-   Authorization Code + PKCE **or** SAML 2.0 Web Browser SSO — you pick
-   at the start.
+1. Logs a user in at **`https://idp.xaa.dev`** via OIDC Authorization
+   Code + PKCE.
 2. Holds an IdP **refresh token** as the session anchor, obtained by
    requesting `offline_access`.
 3. Mints a delegated **ID-JAG** for `https://auth.resource.xaa.dev` from
@@ -50,40 +96,19 @@ token" and "the session is over, sign in again."
 
 ---
 
-## Pick two paths first
+## Pick your path first
 
-Two decisions before anything else. They're independent, and each is one
-question.
+One decision before anything else. Protocol isn't part of it — this kit
+builds against **OIDC only** (`XAA_PROTOCOL=oidc`, fixed).
 
-**1. Protocol — how you log in (`XAA_PROTOCOL`)**
-
-| Path                 | Step 0 is…                                                                 | Pick it when                                                          |
-| -------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| **OIDC** *(default)* | Authorization Code + PKCE. Returns an ID Token **and** a refresh token.    | You have no constraint. Fewer moving parts; the path xaa.dev's own docs cover. |
-| **SAML**             | SP-initiated Web Browser SSO, then one extra exchange (**Step 0b**) trading the assertion for a refresh token. | You're modelling an app whose IdP integration is already SAML, or you want to exercise SAML deliberately. |
-
-**2. Application type — what you do with the token (`APP_TYPE`)**
+**Application type — what you do with the token (`APP_TYPE`)**
 
 | Type                       | Step 3 is…                                                                                      | Pick it when                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | **standalone** *(default)* | Your app calls a protected REST resource itself with `Authorization: Bearer`. No extra deps.     | You're building a conventional web app or service.                  |
 | **MCP client**             | Your app drives an MCP server through the **official MCP SDK**, using that same token. Adds one dependency and a fourth host. | You're building an agent-facing client that consumes MCP resources or tools. |
 
-**No constraint? OIDC + standalone.**
-
-### Why this is two forks, not four builds
-
-```
-                 Step 0 / 0b      Step 1        Step 2      Step 3
-  XAA_PROTOCOL   OIDC │ SAML      shared        shared      shared
-  APP_TYPE       shared           scopes only   shared      Standalone │ MCP
-```
-
-The axes touch different parts of the flow and never interact — there's no
-"SAML + MCP" variant to learn, just the SAML Step 0 plus the MCP Step 3.
-`APP_TYPE` reaches Step 1 only as configuration (MCP needs `mcp.access` in
-the scope list), never as logic. Reading load for any single combination is
-roughly what v2 was.
+**No constraint? standalone.**
 
 ### Where the kit ends and the MCP SDK begins
 
@@ -92,7 +117,7 @@ is deliberate and strict:
 
 | Concern | Owner |
 | ------- | ----- |
-| Login (OIDC or SAML), refresh token, ID-JAG, access token, session, config, redaction, error taxonomy, observability | **this kit** |
+| Login (OIDC), refresh token, ID-JAG, access token, session, config, redaction, error taxonomy, observability | **this kit** |
 | JSON-RPC framing, `initialize`, capability negotiation, transport, `resources/*`, `tools/*` | **official MCP SDK** |
 | MCP's own OAuth — RFC 9728 discovery, DCR, auth-code + PKCE | **neither, deliberately** |
 
@@ -110,15 +135,14 @@ Treat the kit as a template. Here's the surface area you control:
 
 | Power                                | What that means                                                                                                                                                                                            |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Pick either protocol path**         | OIDC (Authorization Code + PKCE) or SAML 2.0 (SP-initiated Web Browser SSO). Both converge on the same refresh-token-anchored flow from Step 1 onward. |
 | **Pick any stack**                   | Python (FastAPI/Flask/Django), Node/TS (Express/Fastify/Next.js), Go (chi/Gin), Rust (Axum), Java/Kotlin (Spring/Ktor), Ruby (Rails/Sinatra), .NET, Elixir — anything that speaks HTTPS, JSON, SHA-256, and httpOnly cookies. |
-| **Pick any OIDC / SAML library**     | The kit specifies *wire format*, not library calls. Use `authlib`, `openid-client@6`, `coreos/go-oidc`, `openidconnect`, Spring Security — whatever's idiomatic. Hand-roll the OIDC bits if you'd rather; **do not hand-roll SAML signature verification.** |
-| **Pick any session strategy**        | Sealed httpOnly cookie or server-stored (Redis / SQLite / Postgres) — both are acceptable as long as no raw token reaches the browser and the cookie is httpOnly + `SameSite=Lax`. On the SAML path, a cookie-based session is likely to overflow if you keep the assertion — so discard it after Step 0b, or use a server store. |
+| **Pick any OIDC library**            | The kit specifies *wire format*, not library calls. Use `authlib`, `openid-client@6`, `coreos/go-oidc`, `openidconnect`, Spring Security — whatever's idiomatic. Hand-roll the OIDC bits if you'd rather. |
+| **Pick any session strategy**        | Sealed httpOnly cookie or server-stored (Redis / SQLite / Postgres) — both are acceptable as long as no raw token reaches the browser and the cookie is httpOnly + `SameSite=Lax`. |
 | **Pick any UI shape**                | Server-rendered templates, an SPA, a TUI, plain HTML — the kit only specifies surfaces with behaviour ("show the access token, redacted; show the most recent ID-JAG; render a request timeline").        |
 | **Bring Your Own Resource (BYOR)**   | Default resource is `https://api.resource.xaa.dev/api/todos`, but `RESOURCE_PATH` (and `RESOURCE_URL` if you've registered another resource auth server) can point at any protected endpoint xaa.dev knows. |
 | **Bring your own AI agent**          | OpenAI Codex, Claude Code, Cursor, Aider, Copilot, ChatGPT, Cody — agentic and chat-only flows are both supported, see *Ignite* below.                                                                     |
 | **Customise scopes + claims**        | `RESOURCE_SCOPES` controls what you ask for; the kit's error mapping handles `insufficient_scope` cleanly when you ask for too much.                                                                       |
-| **Extend the test matrix**           | The hermetic rows (~36 on OIDC, ~41 on SAML) + 9 smoke probes + E1–E7 manual scenarios in `hackathon-kit/07-testing.md` are the *minimum*. Add more — the error-mapping union is designed for it.          |
+| **Extend the test matrix**           | The hermetic rows (~36) + 9 smoke probes + E1–E6 manual scenarios in `hackathon-kit/07-testing.md` are the *minimum*. Add more — the error-mapping union is designed for it.          |
 
 What you do **not** control: the xaa.dev hostnames (`idp.xaa.dev`,
 `auth.resource.xaa.dev`, `api.resource.xaa.dev`, plus `mcp.xaa.dev` in MCP
@@ -135,9 +159,9 @@ specifies *behaviour*, not libraries.
 ## 30-second mental model
 
 ```
-OIDC:  authorize(+offline_access) ──► ID Token + REFRESH TOKEN ─┐
-SAML:  SSO ─► assertion ─► [0b] ────► REFRESH TOKEN ────────────┤
-                                                                ▼
+authorize(+offline_access) ──► ID Token + REFRESH TOKEN
+                                          │
+                                          ▼
        [1] refresh token → ID-JAG        [2] ID-JAG → access token
         RFC 8693, CLIENT_*                RFC 7523, RESOURCE_CLIENT_*
         5 min, single-use-ish             ~2 h, no refresh token
@@ -213,14 +237,13 @@ assistant as you walk through the prompts.
 
 | Need                   | Why                                                                 | Quick check             |
 | ---------------------- | ------------------------------------------------------------------- | ----------------------- |
-| **Protocol choice**    | OIDC or SAML. Determines your registration tab and env vars.         | Set `XAA_PROTOCOL`.     |
 | Language runtime       | Whatever you're building in (Python ≥3.11, Node ≥20, Go ≥1.22, …)   | `python --version` etc. |
 | `openssl`              | Generate `SESSION_SECRET`.                                          | `openssl version`       |
 | `curl`                 | Verification probes throughout the kit.                             | `curl --version`        |
 | Accurate system clock  | xaa.dev allows **30 s** of skew on the ID-JAG's `iat`. Drift breaks Step 2 with an error that looks like a code bug. | `date -u` vs any NTP source |
-| Free port              | Default `APP_URL=http://localhost:3000`. Pick another if 3000 is busy — change `APP_URL` + `REDIRECT_URI`/`SAML_ACS_URL` together and re-register. | `lsof -i :3000`         |
+| Free port              | Default `APP_URL=http://localhost:3000`. Pick another if 3000 is busy — change `APP_URL` + `REDIRECT_URI` together and re-register. | `lsof -i :3000`         |
 | `.env.local`           | `cp .env.example .env.local`, then fill the per-developer block.    | `test -f .env.local`    |
-| xaa.dev account        | Registered with **two** client pairs + your callback URI, on the **OIDC or SAML tab** matching your path. | See `hackathon-kit/reference/env-vars.md` § Registration walkthrough. |
+| xaa.dev account        | Registered with **two** client pairs + your callback URI, on the **OIDC tab**. | See `hackathon-kit/reference/env-vars.md` § Registration walkthrough. |
 
 Windows: use Git Bash / WSL for the curl + openssl commands. Generate
 `SESSION_SECRET` with `[Convert]::ToBase64String((1..32 | %{Get-Random -Min 0 -Max 256}))`
@@ -233,24 +256,18 @@ in PowerShell as a fallback.
 The kit is library-agnostic, but you'll move faster with a known-good
 defaults set:
 
-| Language        | HTTP framework              | OIDC client                                          | SAML library *(SAML only)*              | MCP SDK *(mcp only)*        | Session                          | Test runner   |
-| --------------- | --------------------------- | ---------------------------------------------------- | -------------------------------------- | --------------------------- | -------------------------------- | ------------- |
-| **Python**      | FastAPI                     | `authlib` or `oic`                                   | `python3-saml` or `pysaml2`             | **`mcp`** (official)        | `itsdangerous` cookie / Redis    | `pytest`      |
-| **Node/TS**     | Express / Fastify / Next.js | `openid-client@6`                                    | `@node-saml/node-saml` or `samlify`     | **`@modelcontextprotocol/sdk`** (official) | `iron-session` (sealed cookie)   | `vitest`      |
-| **Go**          | `chi` / Gin                 | `coreos/go-oidc` + `golang.org/x/oauth2`             | `crewjam/saml`                          | see note below              | `gorilla/sessions` (cookie store)| `go test`     |
-| **Rust**        | Axum                        | `openidconnect`                                      | `samael`                                | see note below              | `tower-sessions` (cookie/Redis)  | `cargo test`  |
-| **Java/Kotlin** | Spring Boot                 | `spring-security-oauth2-client`                      | `spring-security-saml2-service-provider`| see note below              | Spring Session                   | JUnit 5       |
-| **Ruby**        | Rails / Sinatra             | `omniauth_openid_connect`                            | `ruby-saml`                             | see note below              | Rails session (cookie)           | RSpec         |
-| **.NET**        | ASP.NET Core                | `Microsoft.AspNetCore.Authentication.OpenIdConnect`  | `Sustainsys.Saml2`                      | see note below              | Cookie auth handler              | xUnit         |
+| Language        | HTTP framework              | OIDC client                                          | MCP SDK *(mcp only)*        | Session                          | Test runner   |
+| --------------- | --------------------------- | ---------------------------------------------------- | --------------------------- | --------------------------------- | ------------- |
+| **Python**      | FastAPI                     | `authlib` or `oic`                                   | **`mcp`** (official)        | `itsdangerous` cookie / Redis    | `pytest`      |
+| **Node/TS**     | Express / Fastify / Next.js | `openid-client@6`                                    | **`@modelcontextprotocol/sdk`** (official) | `iron-session` (sealed cookie)   | `vitest`      |
+| **Go**          | `chi` / Gin                 | `coreos/go-oidc` + `golang.org/x/oauth2`             | see note below              | `gorilla/sessions` (cookie store)| `go test`     |
+| **Rust**        | Axum                        | `openidconnect`                                      | see note below              | `tower-sessions` (cookie/Redis)  | `cargo test`  |
+| **Java/Kotlin** | Spring Boot                 | `spring-security-oauth2-client`                      | see note below              | Spring Session                   | JUnit 5       |
+| **Ruby**        | Rails / Sinatra             | `omniauth_openid_connect`                            | see note below              | Rails session (cookie)           | RSpec         |
+| **.NET**        | ASP.NET Core                | `Microsoft.AspNetCore.Authentication.OpenIdConnect`  | see note below              | Cookie auth handler              | xUnit         |
 
 Anything that speaks HTTPS, parses JSON, can SHA-256 + base64url, and
 stores an httpOnly encrypted cookie will work.
-
-> **On the SAML path, use a maintained library for assertion signature
-> verification.** This is the one place in the kit where hand-rolling is
-> actively dangerous — XML-DSIG signature-wrapping and XXE are both live
-> risks, and both are easy to get subtly wrong. The OIDC path has no
-> equivalent hazard.
 
 > **On the MCP path, the SDK is not a free choice.** Use the *official*
 > Model Context Protocol SDK for your language. The two rows marked
@@ -276,7 +293,7 @@ stores an httpOnly encrypted cookie will work.
     ├── IGNITION.md                 paste-into-agent first message
     ├── 00-brief.md                 hackathon task brief + protocol choice
     ├── 01-project-skeleton.md      stack scaffold + env config + session + token storage
-    ├── 02-user-login.md            OIDC (PKCE) or SAML (SSO + Step 0b) — branched
+    ├── 02-user-login.md            OIDC Authorization Code + PKCE login
     ├── 03-token-exchange.md        RFC 8693 + RFC 7523 (the XAA core)
     ├── 04-protected-resource-call.md   bearer call + WWW-Authenticate + re-mint rule
     ├── 05-ui-and-observability.md  dashboard + log surface
@@ -285,11 +302,11 @@ stores an httpOnly encrypted cookie will work.
     ├── ignition/
     │   └── chat-only.md            ignition variant for ChatGPT/Aider (no FS access)
     └── reference/
-        ├── xaa-spec.md             canonical wire format, both paths
+        ├── xaa-spec.md             canonical wire format
         ├── error-mapping.md        ErrorCode set + decoding tables
         ├── env-vars.md             fixed xaa.dev hosts + per-dev creds + registration walkthrough
         ├── architecture.md         flow diagrams
-        └── glossary.md             terminology anchors (OIDC + SAML side by side)
+        └── glossary.md             terminology anchors
 ```
 
 Each numbered prompt file follows the same shape: **Prompt** (paste into
@@ -347,15 +364,10 @@ Common extensions other hackathon teams have shipped:
   be cached — key it by a hash of the refresh token so logout
   invalidates it implicitly, and set a TTL well under the upstream
   `expires_in`.
-- **Both protocol paths in one app.** The kit deliberately has you build
-  one. If you want a runtime switch, the seam is clean: everything from
-  Step 1 onward is shared, so only Step 0/0b needs branching. Keep
-  `XAA_PROTOCOL` per-session rather than per-process.
 - **Production hardening.** Flip `secure: true` on the cookie, set
-  `SameSite=Strict` if your callback origin matches (**not** on the SAML
-  path — the ACS POST needs `Lax` or a `RelayState`-carried session id),
-  rotate `SESSION_SECRET`, encrypt the refresh token at rest, and move
-  the session store off-process.
+  `SameSite=Strict` if your callback origin matches, rotate
+  `SESSION_SECRET`, encrypt the refresh token at rest, and move the
+  session store off-process.
 
 Extensions go in *your* repo, not the kit. The kit stays as the spec.
 
@@ -381,9 +393,6 @@ A few practices that make the kit go smoothly with any AI coding tool:
   push back with the spec citation.
 - **One stack only per session.** Don't mix Python and Node in one chat
   — the AI will helpfully drift between them.
-- **One protocol path only.** Same reasoning, sharper consequences. If
-  you paste both the OIDC and SAML branches of a step, expect a build
-  that half-implements each. State your path once, up front.
 - **Watch for the ID Token creeping back in.** Anchoring on the ID Token
   is the v2 pattern and it's what most training data contains, so an AI
   will drift toward it. If you see `subject_token_type=…:id_token` on
