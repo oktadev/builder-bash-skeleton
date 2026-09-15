@@ -186,6 +186,10 @@ alone is sufficient — `auth()` (discovery + DCR) runs *only* from the SDK's
 as loud failures so an accidental OAuth attempt can't be silent:
 
 ```ts
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+
 function xaaAuthProvider(accessToken: string): OAuthClientProvider {
   const refuse = (what: string) => () => {
     throw new Error(`MCP SDK attempted its own OAuth (${what}). The token is ` +
@@ -202,15 +206,31 @@ function xaaAuthProvider(accessToken: string): OAuthClientProvider {
     codeVerifier: refuse('codeVerifier'),
   };
 }
+
+export async function callViaMcp(accessToken: string, mcpUrl: string) {
+  const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
+    authProvider: xaaAuthProvider(accessToken),
+  });
+  const client = new Client({ name: 'xaa-hackathon-kit', version: '4.0.0' });
+  await client.connect(transport);
+  try {
+    const negotiated = transport.protocolVersion;        // assert against config
+    const resources = await client.listResources();
+    const contents = await client.readResource({ uri: 'todo0://todos' });
+    return { negotiated, resources, contents };
+  } finally {
+    await client.close();
+  }
+}
 ```
 
-`redirectUrl` returning `undefined` is explicitly supported for
-non-interactive flows. **Don't instead pass a `fetch` wrapper that sets the
-header yourself** — that leaves `_authProvider` unset, so the SDK's 401
-handling never runs and a rejected token surfaces as an opaque transport
-error you can't map. The `authProvider` seam is the supported extension
-point. *(Python: same shape — supply the bearer token to
-`streamablehttp_client`. Exact parameter name is `TODO(confirm)`.)*
+`redirectUrl` returning `undefined` is explicitly supported for non-interactive
+flows. **Don't instead pass a `fetch` wrapper that sets the header yourself** —
+that leaves `_authProvider` unset, so the SDK's 401 handling never runs and a
+rejected token surfaces as an opaque transport error you can't map. The
+`authProvider` seam is the supported extension point. *(Python: same shape —
+supply the bearer token to `streamablehttp_client`; exact parameter name is
+`TODO(confirm)`.)*
 
 **Verify:** T5.x and T8.x below. Plus:
 

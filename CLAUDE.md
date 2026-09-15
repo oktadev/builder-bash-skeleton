@@ -12,8 +12,9 @@
 - **First action:** read `hackathon-kit/IGNITION.md`, then ask its three
   questions — protocol, app type, stack — in your first reply. Don't read the
   rest of the kit before asking.
-- Record the answers below under `## Session choices` so a later session
-  resumes on the same path instead of re-asking.
+- Record the answers in **`AGENTS.md`** under a `## Session choices` heading
+  (not here — this file imports that one, and every other tool reads it too)
+  so a later session resumes on the same path instead of re-asking.
 - Prefer Read/Edit over shell `cat`/`sed` when walking the kit — it's a spec
   you read, not output you pipe.
 - `.env.local` is blocked from the file tools by design. Don't work around

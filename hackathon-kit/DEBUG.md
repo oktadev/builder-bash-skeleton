@@ -126,7 +126,6 @@ jwt_part "${ID_JAG}" 1     # header  — typ MUST be oauth-id-jag+jwt
 jwt_part "${ID_JAG}" 2     # payload — iss, aud, client_id, exp, iat, sub or sub_id
 ```
 
-If curl works and your code doesn't, the bug is in your client. If curl
-fails too, it's your registration, env, or spec understanding — not your
-code. And if curl fails **only** on the SAML path while OIDC is fine,
-suspect D-16 before suspecting yourself.
+If curl works and your code doesn't, the bug is in your client. If curl fails
+too, it's your registration, env, or spec understanding — not your code. And if
+curl fails **only** on SAML while OIDC is fine, suspect D-16 before yourself.

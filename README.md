@@ -66,17 +66,15 @@ XXE are live risks), and on `mcp` use the **official** SDK — see
 
 ## Layout
 
-Four kit files: **`IGNITION.md`** (entry point — paste this), **`SPEC.md`**
-(the only reference: hosts, wire format, env, errors, invariants),
-**`BUILD.md`** (six phases, one stop), **`DEBUG.md`** (23 failure shapes). At
-the root: `AGENTS.md` (agent digest, ~20 tools auto-load it), `CLAUDE.md`
-(thin import of it), `.env.example`. `hackathon-kit/` is the spec —
-read-only while building.
+Four kit files: **`IGNITION.md`** (entry point — paste this), **`SPEC.md`** (the
+only reference: hosts, wire format, env, errors, invariants), **`BUILD.md`**
+(six phases, one stop), **`DEBUG.md`** (23 failure shapes). At the root:
+`AGENTS.md` (agent digest, ~20 tools auto-load it), `CLAUDE.md` (thin import of
+it), `.env.example`. `hackathon-kit/` is the spec — read-only while building.
 
-**One caveat worth knowing before you start:** a build can pass the E1
-happy-path scenario and still fail **E6**, the one that proves the refresh
-token is really your session anchor. If your agent writes
-`subject_token_type=…:id_token` on Step 1, that's the drift — it should be
-`…:refresh_token`. Details in `BUILD.md` § Phase 6.
+**One caveat before you start:** a build can pass the E1 happy path and still
+fail **E6**, the one that proves the refresh token is really your session
+anchor. If your agent writes `subject_token_type=…:id_token` on Step 1, that's
+the drift — it should be `…:refresh_token`. See `BUILD.md` § Phase 6.
 
 Hit a failure shape that isn't in `DEBUG.md`? PRs welcome.

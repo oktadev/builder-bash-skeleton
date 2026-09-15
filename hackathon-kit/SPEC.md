@@ -60,9 +60,9 @@ Fields you'll actually check (the first three are non-standard, per
 There is no discovery signal for SAML as a *grant profile*; the only SAML
 signal anywhere is `…token-type:saml2` in the IdP's subject-token list.
 
-**No revocation endpoint exists** — absent from both metadata documents, and
-16 probes (`token/revoke`, `revocation`, `oauth2/revoke`, `logout`, … GET and
-POST, both hosts) all 404. You can introspect a token but not kill it.
+**No revocation endpoint exists** — absent from both metadata documents, and 16
+probes (`token/revoke`, `revocation`, `oauth2/revoke`, `logout`, … GET and POST,
+both hosts) all 404. You can introspect a token but not kill it.
 `end_session_endpoint` *does* exist (`https://idp.xaa.dev/session/end`, plus
 `/saml/slo` on SAML).
 
@@ -513,7 +513,9 @@ have SAML enabled for your tenant**, or Step 2 rejects a perfectly correct
 ID-JAG (DEBUG D-16).
 
 The developer fills `.env.local` themselves — **never solicit secrets in
-chat.** Template:
+chat.** The template below is canonical; **the repo's `.env.example` is older
+and omits `APP_TYPE`, `MCP_SERVER_URL` and `MCP_PROTOCOL_VERSION`**, so if you
+copied it, add those three from here rather than assuming they don't exist:
 
 ```dotenv
 # === Fixed (leave as-is) ===
