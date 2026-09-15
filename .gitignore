@@ -30,5 +30,8 @@ keys/
 # Test
 coverage/
 
-# Claude local state
-.claude/
+# Claude Code — share settings.json (kit permission allowlist), ignore the rest
+.claude/*
+!.claude/settings.json
+!.claude/check-facts.sh
+.claude/settings.local.json

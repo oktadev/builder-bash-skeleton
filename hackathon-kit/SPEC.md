@@ -1,0 +1,797 @@
+# SPEC — the only reference you need
+
+Canonical wire format, env contract, and error taxonomy for a Cross-App
+Access (XAA) **Requesting App** on the xaa.dev playground. **Kit v4.** Every
+fact lives here once; never guess a value that isn't here — ask. *Requesting
+App* = the app you're building. *ID-JAG* = Identity Assertion Authorization
+Grant, a signed delegation assertion the IdP mints so a resource can trust
+your app is acting for the user.
+
+---
+
+## Hosts
+
+| Role | URL | Discovery |
+| --- | --- | --- |
+| IdP | `https://idp.xaa.dev` | `/.well-known/openid-configuration`. SAML metadata `/saml/metadata`. |
+| Resource auth server | `https://auth.resource.xaa.dev` | `/.well-known/oauth-authorization-server` |
+| Resource (REST, Todo0) | `https://api.resource.xaa.dev` | `/.well-known/oauth-protected-resource` |
+| MCP server (`APP_TYPE=mcp` only) | `https://mcp.xaa.dev/mcp` | see below |
+
+IdP and resource auth server are **separate OAuth domains** — two client
+credential pairs, one registered at each. Cache discovery for process lifetime;
+xaa.dev's metadata is stable.
+
+Three discovery traps:
+
+1. `idp.xaa.dev/.well-known/oauth-authorization-server` **404s** — the IdP
+   publishes OIDC discovery only.
+2. On the resource auth server use **`oauth-authorization-server`**, not
+   `openid-configuration`. Both return 200 and are byte-identical *except*
+   that `openid-configuration` **omits
+   `authorization_grant_profiles_supported`** — so a library defaulting to
+   it never sees the id-jag grant profile advertised.
+3. *(mcp)* RFC 9728 metadata is **path-suffixed**:
+   `https://mcp.xaa.dev/.well-known/oauth-protected-resource/mcp`. The bare
+   path 404s — take the URL from the `WWW-Authenticate: Bearer
+   resource_metadata="…"` header rather than constructing it. **Do not
+   follow the chain further:** `mcp.xaa.dev/.well-known/oauth-authorization-server`
+   exists but leaks unroutable internal hostnames — plain `http://`,
+   Docker-internal, resolving nowhere:
+   `"token_endpoint": "http://authorization-server:5001/token"`, same for
+   `jwks_uri`. The same leak exists at `api.resource.xaa.dev/api`. Use the
+   `authorization_servers` pointer to confirm the AS identity, then fetch
+   its metadata from `auth.resource.xaa.dev` directly. This only bites if
+   you let the SDK run its own OAuth — which you must not (§ Invariants 9).
+
+Fields you'll actually check (the first three are non-standard, per
+`draft-ietf-oauth-identity-assertion-authz-grant-04` §§ 7.1–7.2):
+`token_exchange_subject_token_types_supported` (IdP;
+`[…:id_token, …:saml2, …:refresh_token]`),
+`identity_chaining_requested_token_types_supported` (IdP;
+`[…:id-jag, …:refresh_token]`), `authorization_grant_profiles_supported`
+(auth srv; `["urn:ietf:params:oauth:grant-profile:id-jag"]`),
+`scopes_supported` (both; includes `offline_access`), and
+`token_endpoint_auth_methods_supported` (both; `client_secret_basic` **and**
+`client_secret_post`). Both hosts also expose `/token/introspection`.
+
+**Field-name trap:** the standard-sounding `subject_token_types_supported` does
+**not** exist on either host — only the `token_exchange_`-prefixed name above.
+There is no discovery signal for SAML as a *grant profile*; the only SAML
+signal anywhere is `…token-type:saml2` in the IdP's subject-token list.
+
+**No revocation endpoint exists** — absent from both metadata documents, and 16
+probes (`token/revoke`, `revocation`, `oauth2/revoke`, `logout`, … GET and POST,
+both hosts) all 404. You can introspect a token but not kill it.
+`end_session_endpoint` *does* exist (`https://idp.xaa.dev/session/end`, plus
+`/saml/slo` on SAML).
+
+---
+
+## The flow
+
+`XAA_PROTOCOL` changes **how you log in**; `APP_TYPE` changes **what you do
+with the token**. They branch in different places, so all four combinations are
+one build with two swaps — there is no separate "SAML+MCP" variant to learn,
+just the SAML Step 0 plus the MCP Step 3. `APP_TYPE` reaches Steps 0b and 1 as
+**configuration only** — both send `RESOURCE_SCOPES`, so on MCP both carry
+`mcp.access` — never as logic. That scope list is the one place the two axes
+meet; everything else is independent.
+
+```
+OIDC:  authorize(+offline_access) ─► ID Token + REFRESH TOKEN ─┐
+SAML:  SSO ─► assertion ─► [0b] ──► REFRESH TOKEN ─────────────┤
+                                                               ▼
+       [1] refresh → ID-JAG  ──►  [2] ID-JAG → access token ──►┤
+            RFC 8693, CLIENT_*      RFC 7523, RESOURCE_CLIENT_* │
+            5 min                   ~2 h, no refresh token      │
+                          standalone ─► [3a] REST Bearer fetch ─┤
+                          mcp        ─► [3b] official MCP SDK ──┘
+              └──── re-run 1+2 on every /api/call ────┘
+```
+
+> **Step numbering is offset by one from xaa.dev's own docs.** This kit's
+> Step 1 is their "Step 2", throughout. Their Step 1 is our Step 0; our
+> Step 0b is undocumented by them.
+
+### URN strings — copy, never retype
+
+| URN | Used as |
+| --- | --- |
+| `urn:ietf:params:oauth:grant-type:token-exchange` | `grant_type`, Steps 0b + 1 |
+| `urn:ietf:params:oauth:grant-type:jwt-bearer` | `grant_type`, Step 2 |
+| `urn:ietf:params:oauth:token-type:saml2` | `subject_token_type`, Step 0b |
+| `urn:ietf:params:oauth:token-type:refresh_token` | `subject_token_type`, Step 1 |
+| `urn:ietf:params:oauth:token-type:id-jag` | `requested_token_type`, Step 1 (**hyphen**) |
+
+`id-jag` is hyphenated; `refresh_token` and `id_token` use underscores. And
+`urn:okta:params:oauth:token-type:id-jag` appears in xaa.dev's frontend as a
+**display label only** — never send it; the IETF spelling goes on the wire.
+
+### Lifetimes
+
+| Token | Lifetime |
+| --- | --- |
+| ID Token | **~10 min.** `aud` = `client_id`. Too short to anchor a session. |
+| SAML assertion | per its `Conditions`. Consumed once at Step 0b. |
+| **Refresh token** | **undocumented — `TODO(confirm)`. This is the session anchor.** |
+| ID-JAG | **5 min**, `iat` skew tolerance **30 s**. May be single-use. |
+| Access token | **~2 h** (`expires_in: 7200`). |
+
+**Why the refresh token is the anchor.** xaa.dev's `/docs/step2/` is
+explicit: the ID Token is *"always available, but only good for one exchange
+right after login"*, while the Refresh Token *"lets you mint new ID-JAGs
+later without repeating it."* Never invent a refresh-token lifetime — no
+countdown timers, no proactive-refresh schedulers keyed to a made-up TTL.
+
+---
+
+## Step 0 — user login
+
+### ▸ OIDC — Authorization Code + PKCE
+
+```
+GET https://idp.xaa.dev/authorize
+      ?client_id=<CLIENT_ID>
+      &redirect_uri=<REDIRECT_URI>
+      &response_type=code
+      &scope=openid+profile+email+offline_access
+      &prompt=consent
+      &state=<base64url csprng, ≥32 bytes>
+      &nonce=<base64url csprng, ≥32 bytes>
+      &code_challenge=<base64url(SHA-256(code_verifier)), unpadded>
+      &code_challenge_method=S256
+```
+
+**`RESOURCE_SCOPES` (`todos.read`, plus `mcp.access` on MCP) is deliberately
+*not* in this list** — resource scopes are requested at Step 1, not at login,
+which is the whole point of the delegated pattern: the IdP mints a delegation
+for a resource whose access policy it doesn't own. Adding them here is a common
+"for symmetry" instinct and may return `invalid_scope`. *(Step 0b differs — see
+that section — because it's a token exchange, not an authorize request.)*
+
+`offline_access` is what makes the token response carry a `refresh_token`.
+Omit it and every call after ~10 minutes fails. PKCE: 32 random bytes →
+base64url unpadded = a 43-char `code_verifier`. **S256 only, never
+`plain`.** Store `{code_verifier, state, nonce, created_at}` server-side
+keyed by an httpOnly cookie; reject a callback older than **10 minutes**.
+
+```
+POST https://idp.xaa.dev/token
+      grant_type=authorization_code
+      code=<from query>
+      redirect_uri=<must equal the authorize value>
+      code_verifier=<from session>
+      client_id=<CLIENT_ID>
+      client_secret=<CLIENT_SECRET>
+```
+
+Response: `{access_token, id_token, refresh_token, token_type, expires_in:600}`.
+**That `expires_in: 600` belongs to the IdP `access_token`, which this kit never
+uses — it is not the refresh token's lifetime, and not your session's.** Verify
+`state` matches the session's and the `id_token`'s `nonce` claim matches the
+session's nonce.
+
+**Verify the ID Token before trusting its claims** — signature against
+`jwks_uri` from discovery, plus `iss`, `aud == client_id`, and `exp`. Most OIDC
+libraries do this for you; if you hand-rolled the code exchange, base64-decoding
+is *not* verification, and nothing else in the kit will catch the omission.
+`email` and `name` come from these claims — the kit never calls a
+`userinfo_endpoint`.
+
+**Store `refresh_token`** — the anchor. Keep the ID Token's *claims* for
+rendering; don't depend on it past ~10 min. Ignore the IdP `access_token`; this
+kit never uses it. Then **skip Step 0b** — go to Step 1.
+
+### ▸ SAML — SP-initiated Web Browser SSO
+
+| Property | Value |
+| --- | --- |
+| Metadata | `https://idp.xaa.dev/saml/metadata` |
+| **IdP** `entityID` *(theirs — not yours)* | `https://idp.xaa.dev/saml` |
+| **Your SP `entityID`** | **You choose it and register it** — see below |
+| SSO / SLO | `https://idp.xaa.dev/saml/sso` · `/saml/slo` (HTTP-Redirect + POST) |
+| Signing cert CN | `IdenX SAML IdP` |
+| `WantAuthnRequestsSigned` | `false` — no SP signing key needed to *send* an AuthnRequest |
+| NameID formats | Use **`emailAddress`** or `persistent`. Metadata also advertises `transient` but registration rejects it — **and it would create a new user per login**, since the resource keys users by NameID. |
+
+**Your SP `entityID` is a value you pick, not one xaa.dev issues.** Any stable
+absolute URI works; `${APP_URL}/saml/metadata` is the conventional choice. Set
+it as `SAML_SP_ENTITY_ID`, register that exact string, and use it in **four**
+places — the `<saml:Issuer>` of your `<AuthnRequest>`, the
+`AudienceRestriction` you validate against, the Audience the IdP maps to your
+`CLIENT_ID` at Step 0b, and `sub_id.sp_name_qualifier` when the NameID is
+SP-scoped. **Do not use the IdP's `entityID` above for any of them.** (Only the
+registration form's *label* for this field is unverified — `TODO(confirm)` 8.)
+
+1. Send an `<AuthnRequest>` to the SSO endpoint. Put an **opaque, single-use,
+   ≥32-byte-entropy transaction id in `RelayState`** — SAML's `state` — and
+   record the request `ID` server-side against it. No PKCE, no `nonce` here.
+   `RelayState` round-trips through the IdP without depending on cookies,
+   which is what makes it usable on the cross-site ACS POST (D-8). Keep it
+   short: the SAML binding caps `RelayState` at **80 bytes**, and it lands in
+   the IdP's logs and the browser's history, so it must be a lookup key with
+   no meaning of its own — never a session token you'd accept as credentials.
+2. Receive `SAMLResponse` at your ACS URL via **HTTP-POST** (form field
+   `SAMLResponse`, standard base64).
+3. **Validate all nine before trusting anything:**
+   1. **XML signature** against the metadata cert.
+   2. **The signature covers the assertion you're about to use** — compare the
+      signed `Reference URI` to the `ID` of the element you extract in step 4.
+      Signature-wrapping works by signing one element and substituting another,
+      so this is the check that closes it, not the signature itself.
+   3. `InResponseTo` == your recorded request `ID`.
+   4. `RelayState` **resolves to a pending transaction that has not been
+      consumed** — then mark it consumed. Because the id is unguessable and
+      single-use, this resolution *is* the CSRF check (the analogue of `state`);
+      a comparison against a value you looked up *by* would be vacuous.
+   5. `Conditions/AudienceRestriction` names **your** SP `entityID`.
+   6. `SubjectConfirmationData/@Recipient` == your `SAML_ACS_URL`, and its own
+      `NotOnOrAfter` is in the future.
+   7. `NotBefore`/`NotOnOrAfter` bracket now, **with an explicit skew
+      allowance** — set one (30–60 s is reasonable). Several libraries,
+      `@node-saml/node-saml` included, default to **zero tolerance**, which
+      fails immediately on a slightly-off clock and looks like D-18 without
+      being it.
+   8. `Status` is `urn:oasis:names:tc:SAML:2.0:status:Success`.
+   9. **Replay:** the assertion `ID` has not been seen before. Cache seen IDs
+      until their `NotOnOrAfter` passes and reject repeats — a signed assertion
+      is otherwise replayable by anyone who captures one.
+4. Extract the **bare `<saml:Assertion>`** element — not the whole response
+   document — preserving **exact original bytes**. Re-serialising can break
+   canonicalisation and invalidate a signature that was fine on the wire.
+
+**Getting the original bytes is the part libraries make hard.** Validation APIs
+typically hand back a parsed profile, and any assertion accessor they expose is
+re-serialised from their DOM — which is exactly what step 4 forbids. So:
+base64-decode the raw `SAMLResponse` form field yourself and slice the
+`<saml:Assertion>` substring out of *that*. The element is matched by
+`/<(saml2?|[A-Za-z0-9]+):Assertion[\s\S]+?<\/\1:Assertion>/` — note the prefix
+is **not** always `saml:`; an IdP emitting `saml2:` is common, so don't hardcode
+one. Slicing a second copy is only safe **because of validation 2** — without
+comparing the signed `Reference URI` to the `ID` of the slice you took, you have
+built the signature-wrapping vulnerability yourself.
+
+**Use a maintained library for signature verification** — the one place in the
+kit where hand-rolling is actively dangerous, since XML-DSIG
+signature-wrapping and XXE are both live risks. Also disable external entity
+resolution explicitly; not every parser does by default.
+
+> **`<EncryptedAssertion>`** — if xaa.dev ever returns one, you need a decryption
+> key and there is no env var for it. Not observed on the playground, so treat
+> it as `TODO(confirm)` 8 and stop and ask rather than improvising.
+
+---
+
+## Step 0b — SAML assertion → refresh token
+
+> **SAML only.** OIDC readers: skip to Step 1.
+
+There is no direct `saml2 → id-jag` route. The assertion buys a refresh
+token, which mints ID-JAGs from then on.
+
+```
+POST https://idp.xaa.dev/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+subject_token=<base64url-UNPADDED bare <saml:Assertion>>
+subject_token_type=urn:ietf:params:oauth:token-type:saml2
+requested_token_type=urn:ietf:params:oauth:token-type:refresh_token
+scope=openid offline_access email <RESOURCE_SCOPES>
+client_id=<CLIENT_ID>
+client_secret=<CLIENT_SECRET>
+```
+
+Response: `{access_token:<ignore>, refresh_token:<ANCHOR — store it>,
+issued_token_type:…refresh_token, token_type:"N_A"}`.
+
+Unlike the OIDC authorize request, this scope list **does** include
+`RESOURCE_SCOPES` — so on `APP_TYPE=mcp` it carries `mcp.access` here as well
+as at Step 1. That's the single point where the two axes meet. Whether the IdP
+accepts `mcp.access` at Step 0b is unverified (`TODO(confirm)` 10): if you get
+`invalid_scope` — which maps to `insufficient_scope` and will otherwise send you
+hunting a phantom scope problem downstream — retry with just
+`openid offline_access email` and report which worked.
+
+`requested_token_type` is **`refresh_token`**, not `id-jag`. Encoding is
+**base64url, unpadded** per RFC 8693 § 3 — draft-04's own § 4.5 example shows
+standard *padded* base64, which wouldn't survive form-encoding (a literal `+`
+decodes to a space). Follow RFC 8693. The IdP also requires your SAML
+Audience / SPEntityID to map to the authenticated client (§ 4.5), so a
+mismatch between your registered SP and `CLIENT_ID` fails **here**, not at SSO.
+
+**Store the refresh token; discard the assertion.** It has done its only job,
+and keeping it will overflow a cookie session (§ Invariants 3).
+
+---
+
+## Step 1 — refresh token → ID-JAG (RFC 8693)
+
+Identical on both paths.
+
+```
+POST https://idp.xaa.dev/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+subject_token=<the refresh token from Step 0 or 0b>
+subject_token_type=urn:ietf:params:oauth:token-type:refresh_token
+requested_token_type=urn:ietf:params:oauth:token-type:id-jag
+audience=https://auth.resource.xaa.dev
+resource=https://api.resource.xaa.dev
+scope=<space-separated>
+client_id=<CLIENT_ID>
+client_secret=<CLIENT_SECRET>
+```
+
+Response: `{access_token:<the ID-JAG>, issued_token_type:…id-jag,
+token_type:"N_A", expires_in:300}`. Validate `issued_token_type`; treat the
+ID-JAG as opaque, since only the resource auth server validates it.
+**`audience` and `resource` are both required** — omitting either is the
+`invalid_request` you'll hit first, and some libraries drop one by default.
+
+**The refresh token is not consumed.** Reuse it to mint more ID-JAGs (RFC
+8693 § 2.1); don't clear it on success. Whether xaa.dev *rotates* them is
+`TODO(confirm)` — write storage so that replacing the stored token when a
+response carries a new `refresh_token` is harmless. You *may* pass an ID
+Token instead (the IdP accepts all three subject types) — **don't**, that's
+the v2 pattern, good for ~10 minutes.
+
+| | `standalone` | `mcp` |
+| --- | --- | --- |
+| `scope` | `todos.read` | **`todos.read mcp.access`** — both required |
+| `resource` | `RESOURCE_URL` | **`MCP_RESOURCE`** — `TODO(confirm)` 5 |
+| `audience` | `https://auth.resource.xaa.dev` | same |
+
+### ID-JAG structure
+
+JWT header `typ` **MUST** be `oauth-id-jag+jwt` (draft-04 § 3.1).
+
+| Claim | Value |
+| --- | --- |
+| `iss` | `https://idp.xaa.dev` |
+| `aud` | the resource auth server's issuer identifier |
+| `sub` | end-user identifier (OIDC path) |
+| `client_id` | the client ID **at the resource auth server** — xaa.dev derives it as `{CLIENT_ID}-at-{resource_id}` |
+| `sub_id` | *optional.* RFC 9493 Subject Identifier. Present on SAML-derived ID-JAGs. |
+| `resource`, `scope`, `jti`, `exp`, `iat`, `nbf` | echo Step 1 / standard |
+
+On SAML, `sub_id` uses the **`saml-nameid`** format (draft-04 § 3.2.1):
+
+```json
+"sub_id": { "format": "saml-nameid",
+            "issuer": "https://idp.xaa.dev/saml",
+            "nameid": "user@example.com",
+            "nameid_format": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+            "sp_name_qualifier": "<your SP entityID, when SP-scoped>" }
+```
+
+`format`, `issuer`, `nameid` are required; the rest appear exactly when the
+corresponding SAML attribute does. When *you* render or key off the subject:
+**prefer `sub_id` and tolerate a missing `sub`**, don't use `nameid` alone,
+and treat `sp_name_qualifier` as part of the identity when the NameID is
+SP-scoped — the same `nameid` under different qualifiers is a different user
+(draft-04 § 3.2.2). Validating the ID-JAG is the resource auth server's job,
+not yours.
+
+---
+
+## Step 2 — ID-JAG → access token (RFC 7523)
+
+Identical on both paths. **Note the client identity changes here.**
+
+```
+POST https://auth.resource.xaa.dev/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
+assertion=<the ID-JAG from Step 1>
+scope=<space-separated>
+client_id=<RESOURCE_CLIENT_ID>
+client_secret=<RESOURCE_CLIENT_SECRET>
+```
+
+Response: `{access_token, token_type:"Bearer", expires_in:7200, scope}` —
+exactly those four fields. xaa.dev's docs prescribe **`client_secret_post`**
+(credentials in the form body, as shown) for developer-registered clients,
+though its own demo app confusingly sends HTTP Basic. Both are advertised, so
+both work — follow the docs.
+
+**No `refresh_token` comes back, and you shouldn't want one.** Draft-04
+§ 4.4.3: *"the ID-JAG replaces the use of Refresh Token for the Resource
+Authorization Server."* When the access token expires, mint a new ID-JAG from
+your refresh token. *(Access-token shape, if you decode one while debugging:
+header `typ: at+jwt` per RFC 9068, `sub` is `{providerName}:{userSub}`, plus
+an `app_org` claim.)*
+
+---
+
+## Step 3 — use the access token
+
+### ▸ 3a — standalone
+
+```
+GET https://api.resource.xaa.dev${RESOURCE_PATH}      # default /api/todos
+Authorization: Bearer <access_token>
+Accept: application/json
+```
+
+Todo0 exposes five read endpoints, all `GET`, all needing `todos.read`:
+`/api/todos`, `/api/todos/{completed,incomplete,stats}`, `/api/todos/:id`.
+Metadata advertises `todos.write` but **no write endpoint exists** —
+advertised-but-unbacked, and a good way to exercise `insufficient_scope`.
+
+### ▸ 3b — MCP client
+
+Wire format below is for **debugging only** — use the official SDK.
+
+```
+POST https://mcp.xaa.dev/mcp
+Authorization: Bearer <access_token>
+Content-Type: application/json
+Accept: application/json, text/event-stream
+```
+
+| Property | Value |
+| --- | --- |
+| Transport | **StreamableHTTP** (JSON-RPC 2.0 over HTTP POST) |
+| Protocol version | **`2025-03-26`** — pin it. Not `2025-06-18`. |
+| Scopes | `todos.read` **and** `mcp.access` |
+| Surface | **Resources, not tools** — `tools/list` returns nothing useful |
+| Resources | `todo0://todos`, `todo0://todos/completed`, `todo0://todos/incomplete` |
+| Health | `GET https://mcp.xaa.dev/health` — unauthenticated |
+
+The `Accept` header is **mandatory** — omitting it yields `406`. The SDK sets
+it, so this matters only when reproducing a call with curl. The demo call is
+`resources/list` then `resources/read` on `todo0://todos`.
+
+---
+
+## Errors
+
+One eight-code set, **the same for both app types** — MCP failures map onto
+it rather than extending it, so the UI never branches on `APP_TYPE`.
+
+| ErrorCode | When | HTTP | UX |
+| --- | --- | --- | --- |
+| `unauthorized` | no session, or 401 with no `error=` param, **or a SAML validation failure at the ACS** (bad signature, `InResponseTo` mismatch, replay, `Status != Success`) — tag `upstream_step: "step0"` and log which check failed | 401 | "Sign in" |
+| `invalid_token` | 401 `error="invalid_token"`, description ≠ expired | 401 | "Token rejected" |
+| `expired_token` | 401 `error="invalid_token"`, description mentions expired **(Step 3)** | 401 | "Expired — retry, it re-mints" |
+| `expired_token` | `invalid_grant` from **Step 0b or Step 1** | 401 | "Session ended — sign in again" |
+| `insufficient_scope` | 403 `error="insufficient_scope"`, or `invalid_scope` | 403 | "Missing scope X" |
+| `resource_failure` | resource 5xx, any other 4xx (404, 429 …), network error, timeout | 502 | "Unavailable — retry" |
+| `token_exchange_failure` | Step 0b/1/2 OAuth error other than `invalid_grant` | 502 | "Auth server error" |
+| `config_error` | required env var missing at request time | 500 | "Misconfigured" |
+| `unknown` | unclassified | 500 | "See logs" |
+
+Shapes — `ok` is a **literal** `true`/`false` so discriminated unions narrow.
+`details` may omit fields the upstream didn't provide.
+
+```json
+{ "ok": false, "error": "<ErrorCode>", "message": "<user-safe>",
+  "requiresReauth": true,              // top-level, only when the session is dead
+  "details": { "upstream_status": 401, "upstream_error": "invalid_token",
+               "upstream_description": "…", "upstream_step": "step1" } }
+
+{ "ok": true,
+  "remintedAfterExpiry": true,         // top-level, only when the retry ran
+  "request":  { "url": "…", "method": "GET" },
+  "response": { "status": 200, "durationMs": 142, "body": {} },
+  "tokens":   { "idJag": "head…tail", "accessToken": "head…tail",
+                "scopes": ["todos.read"] } }
+```
+
+Both flags are **top-level siblings of `ok`, not inside `details`** — `details`
+is reserved for the `upstream_*` set. Omit them entirely when false rather than
+sending `false`, so the UI can test presence.
+
+The session view is `{authenticated, claims?, tokenState?}`, where
+`tokenState` = `{hasRefreshToken (bool), refreshToken ("head…tail"), scopes
+(string[]), expiresAt: "unknown"}`. When unauthenticated, **omit `claims` and
+`tokenState` rather than nulling them** — the smoke probe expects exactly
+`{"authenticated":false}`.
+
+**Always record `upstream_step`** (`step0` · `step0b` · `step1` · `step2` ·
+`step3`). With five failure layers it is the difference between "retry" and
+"log the user out".
+
+### The two faces of `expired_token` — the kit's most consequential rule
+
+| Origin | What expired | What you do |
+| --- | --- | --- |
+| **Step 3**, 401 description mentions expired | the access token | **Re-mint.** Re-run Steps 1+2, retry **exactly once**, bounded by a counter — never recursion. If the fresh token is *also* rejected, that's clock skew or config; surface it. |
+| **Step 1** `invalid_grant` | the **refresh token** | **Re-authenticate.** Set `requiresReauth`, send the user to login. **Nothing to retry** — expired, revoked and invalidated are indistinguishable and none are repairable. |
+| **Step 2** `invalid_grant` | the **ID-JAG** — stale, or `iat` outside the 30 s skew | **Neither.** Surface it; the refresh token is fine, so logging the user out is wrong. Usually a clock problem (DEBUG D-18) or a Step 1 `audience`/`resource` mismatch (D-5). |
+| **Step 0b** `invalid_grant` | the SAML assertion | **Re-authenticate.** Restart SSO. |
+
+Branch on `details.upstream_step`, never on the code alone. Conflating these
+produces an infinite loop.
+
+### Decoding `WWW-Authenticate` (RFC 6750), in order
+
+1. **403** + `error="insufficient_scope"` → `insufficient_scope`.
+2. **401**: no header or no `error=` → `unauthorized`;
+   `error="invalid_token"` + description matching `/expired|exp/i` →
+   `expired_token`; `error="invalid_token"` otherwise, or any other
+   `error=` value → `invalid_token`.
+3. **5xx** or network failure → `resource_failure`.
+4. **Any other 4xx** (404, 400, 405, 429 …) → `resource_failure`, preserving
+   the status. The resource answered, so it isn't an auth problem — a 404 from
+   a wrong `RESOURCE_PATH` is the common case.
+
+Treat the parse as best-effort — never crash on a missing header. If your
+"expired" match fails while curl clearly shows the substring, URL-decode
+the header value first.
+
+### OAuth token-exchange errors (Steps 0b / 1 / 2)
+
+| `error` | Maps to |
+| --- | --- |
+| `invalid_grant` | `expired_token` — **branch on `upstream_step`** |
+| `invalid_client` | `token_exchange_failure` — you crossed the two client pairs |
+| `unsupported_grant_type` | `token_exchange_failure` — URN spelling |
+| `invalid_scope` | `insufficient_scope` |
+| `invalid_request` | `token_exchange_failure` — missing `audience`/`resource` lands here |
+| `invalid_target` | `token_exchange_failure` — unknown `audience`/`resource` |
+| anything else | `token_exchange_failure` |
+
+`invalid_grant` sub-causes, from the description — all map the same, but need
+different fixes: *expiry / `subject_token`* → past its life · *`iat` / clock /
+skew* → **fix your clock, not your code** · *audience / resource* → Step 1
+values wrong · *`sub_id` / NameID / subject* → (SAML) subject unresolvable, or
+your tenant's SAML issuer isn't associated with the ID-JAG issuer. Draft-04
+§ 3.2.2 specifies `invalid_grant` for *every* `sub_id` resolution failure, so
+a SAML tenant misconfiguration is indistinguishable from a dead refresh token
+by code alone — log the raw description.
+
+### MCP transport + JSON-RPC failures
+
+> **`APP_TYPE=mcp` only.** All tagged `upstream_step: "step3"`.
+
+| Signal | ErrorCode |
+| --- | --- |
+| `401` + `-32000` `"Unauthorized: No access token provided"` | `unauthorized` |
+| `401` + `"Unauthorized: Invalid or expired access token"` | `invalid_token`, or `expired_token` if it mentions expiry |
+| `403` | `insufficient_scope` — most likely `mcp.access` missing from Step 1 |
+| `406` | `resource_failure` — you omitted the `Accept` header. Client bug. |
+| `5xx`, DNS, TCP, TLS, timeout | `resource_failure` |
+| `-32601` method not found | `resource_failure` — e.g. `tools/list` on a resources-only server |
+| `-32602` invalid params | `resource_failure` — usually a bad resource `uri` |
+| `-32600` / `-32700` | `resource_failure` — suspect a hand-rolled call |
+| `initialize` rejected on version | `resource_failure` — pin `2025-03-26` |
+| SDK attempts its own OAuth | **not an error to map — a bug to fix.** `DEBUG.md` D-23. |
+
+**Two 401s, two meanings.** From Steps 1–2 (OAuth error JSON) the token could
+not be **minted**. From Step 3 (`WWW-Authenticate`, or JSON-RPC `-32000`) it
+was minted and the **resource rejected it** — wrong `aud`, missing
+`mcp.access`, or genuine expiry. Three different fixes; log the description
+verbatim.
+
+### Redaction
+
+Redact any **string** value whose key matches
+`/(token|secret|assertion|jag|jwt)/i` before serialising: **>16 chars →
+`<first 8>…<last 8>`; ≤16 → `***`; null/absent → the literal text
+`undefined`** (or your language's nearest equivalent — Python `None` renders as
+`undefined`; the point is never to print empty quotes). Use the single-character
+ellipsis `…`, not three dots, since tests compare against it.
+
+**Only redact strings.** Booleans, numbers, arrays and nested objects pass
+through even when the key matches — otherwise `hasRefreshToken: true` and the
+whole `tokenState` object, both required response fields, get destroyed by their
+own key names. Recurse into nested objects and apply the same rule to their
+string leaves.
+
+Preserve non-matching keys verbatim — `audience`, `resource`, `scope`, `status`,
+`duration`, `upstream_step` are the diagnostically useful ones. Two catches:
+**`SAMLResponse` does not match that regex** and contains the assertion, so add
+it explicitly or rename it to an `assertion`-keyed field first; and **`sub_id`
+is not a secret** — it's the diagnostic you need most on SAML, so log it in full.
+
+---
+
+## Environment
+
+Fixed (never substitute): `IDP_URL=https://idp.xaa.dev`,
+`AUTH_SERVER_URL=https://auth.resource.xaa.dev`,
+`RESOURCE_URL=https://api.resource.xaa.dev`.
+
+Credentials come from <https://xaa.dev/developer/register>, which has an
+**`OIDC | SAML` tab toggle** — use the tab matching your path. You get **two
+distinct client pairs, both required**: `CLIENT_*` at `idp.xaa.dev/token`
+(Steps 0, 0b, 1) and `RESOURCE_CLIENT_*` at `auth.resource.xaa.dev/token`
+(Step 2). The resource client ID looks like `<CLIENT_ID>-at-<resource_id>`
+(e.g. `client_abc-at-todo0`) — **that suffix is meaningful; don't strip it.**
+Secrets are shown once. Registration fields: app name; redirect URI (OIDC) or
+ACS URL (SAML), **byte-exact** with your env value or you get
+`redirect_uri_mismatch` (OIDC) / a *silent* failure (SAML); NameID format;
+and resource (`Todo0` by default). `offline_access` is **not** a registration
+field — it's a scope you request. **On SAML, the resource auth server must
+have SAML enabled for your tenant**, or Step 2 rejects a perfectly correct
+ID-JAG (DEBUG D-16).
+
+The developer fills `.env.local` themselves — **never solicit secrets in
+chat.** The template below is canonical; **the repo's `.env.example` is older
+and omits `APP_TYPE`, `MCP_SERVER_URL` and `MCP_PROTOCOL_VERSION`**, so if you
+copied it, add those three from here rather than assuming they don't exist:
+
+```dotenv
+# === Fixed (leave as-is) ===
+IDP_URL=https://idp.xaa.dev
+AUTH_SERVER_URL=https://auth.resource.xaa.dev
+RESOURCE_URL=https://api.resource.xaa.dev
+
+# === The two axes ===
+XAA_PROTOCOL=oidc                 # oidc | saml       — how you log in
+APP_TYPE=standalone               # standalone | mcp  — what you do with the token
+
+# === Per-developer (from xaa.dev/developer/register) ===
+CLIENT_ID=                        # IdP client — Steps 0, 0b, 1
+CLIENT_SECRET=
+RESOURCE_CLIENT_ID=               # resource AS client — Step 2
+RESOURCE_CLIENT_SECRET=
+
+# --- Pick ONE of the next two blocks, per APP_TYPE ---
+# APP_TYPE=standalone
+RESOURCE_PATH=/api/todos
+RESOURCE_SCOPES=todos.read
+
+# APP_TYPE=mcp — uncomment these AND comment out RESOURCE_SCOPES above.
+# Leaving todos.read alone here is D-20, the most common MCP failure: the
+# token mints cleanly and the MCP server then refuses it.
+# MCP_SERVER_URL=https://mcp.xaa.dev/mcp
+# MCP_PROTOCOL_VERSION=2025-03-26
+# RESOURCE_SCOPES=todos.read mcp.access
+# Step 1's `resource` value on this path. Try the default first; if Step 2
+# succeeds but the MCP server 401s, set it to https://mcp.xaa.dev/mcp (D-20).
+# Never edit RESOURCE_URL for this — it's a fixed host.
+# MCP_RESOURCE=https://api.resource.xaa.dev
+
+# --- SAML path only: your SP identity. You choose this; register it verbatim.
+# SAML_SP_ENTITY_ID=http://localhost:3000/saml/metadata
+
+APP_URL=http://localhost:3000
+
+# --- OIDC path only ---
+REDIRECT_URI=http://localhost:3000/api/auth/callback
+
+# --- SAML path only ---
+SAML_ACS_URL=http://localhost:3000/api/auth/saml/acs
+SAML_NAMEID_FORMAT=emailAddress   # or persistent; transient unsupported
+# TODO(confirm) SP entityID var name — register to see the rendered fields.
+# TODO(confirm) whether an SP signing key is issued.
+
+SESSION_SECRET=                   # openssl rand -base64 32
+```
+
+Validate **only the vars your two axes need** — `REDIRECT_URI` (OIDC) vs
+`SAML_ACS_URL` + `SAML_NAMEID_FORMAT` + `SAML_SP_ENTITY_ID` (SAML);
+`RESOURCE_PATH` (standalone) vs `MCP_SERVER_URL` + `MCP_PROTOCOL_VERSION` +
+`MCP_RESOURCE` (MCP) — not all four groups. BYOR overrides
+`RESOURCE_URL`/`RESOURCE_PATH`/`RESOURCE_SCOPES` or `MCP_SERVER_URL`; discovery
+and login still go through the fixed IdP.
+
+**`APP_URL` is the source of truth for the port you bind.** The default is 3000,
+so a framework defaulting elsewhere (uvicorn's 8000, for instance) produces
+D-1's `redirect_uri_mismatch` — the kit's most common failure — seeded by its own
+default. And **changing the port means re-registering**: update `APP_URL` and
+`REDIRECT_URI`/`SAML_ACS_URL` together, then change them at xaa.dev too, or you
+get `redirect_uri_mismatch` on OIDC and a *silent* ACS failure on SAML.
+
+---
+
+## Invariants
+
+1. **PKCE S256 only**, never `plain`. *(OIDC)*
+2. **State + nonce verified server-side.** *(OIDC.* SAML equivalent:
+   `RelayState` + `InResponseTo` + `AudienceRestriction`.*)*
+3. **The refresh token is the session anchor and never reaches the browser** —
+   server-side session only. Same for the ID Token and the SAML assertion. Not
+   `localStorage`, not a non-httpOnly cookie, not a URL, not a response body,
+   not `.env.local`, not a log in plaintext.
+
+   **"Signed" is not "encrypted", and this is the kit's easiest silent
+   failure.** A signed cookie (Starlette `SessionMiddleware`, `itsdangerous`,
+   `gorilla/sessions` without a block key, Rails' default cookie store) stores
+   the payload as **base64 JSON** — tamper-proof but fully readable by anyone
+   holding the cookie. Putting the refresh token in one violates this invariant
+   while passing every test in the kit, because the redaction tests check the
+   log helper and E1 checks page source — a cookie is neither. Pick one of:
+
+   - **A server-side store** (Redis / SQLite / Postgres) with only an opaque id
+     in the cookie. Simplest to reason about, and **required on the SAML path
+     anyway** for the ACS transaction lookup, so prefer it there.
+   - **Genuinely authenticated encryption** in the cookie: Node
+     `iron-session`, Go `gorilla/securecookie` *with a block key*, Python
+     `cryptography`'s Fernet, .NET Data Protection, Spring Session.
+
+   *(Fernet keys are url-safe base64. `openssl rand -base64 32` emits the
+   standard alphabet with `+` and `/`, which Fernet rejects — use
+   `openssl rand -base64 32 | tr '+/' '-_'` or generate with
+   `Fernet.generate_key()`.)*
+
+   Three properties make a leak worse than usual: there is **no revocation
+   endpoint**, so you cannot invalidate it; the token is **not consumed by
+   use**, so a stolen copy keeps working alongside yours; and it **re-mints
+   silently**, granting ID-JAGs indefinitely with no user interaction and no
+   consent prompt. If you persist sessions to disk, encrypt at rest with a key
+   that isn't in the repo.
+4. **Two distinct client pairs**, never mixed — the most common cause of
+   opaque `invalid_client`.
+4b. **Protect your own mutating routes against CSRF.** `POST /api/call`,
+   `POST /api/auth/logout` and `DELETE /api/logs` are cookie-authenticated, and
+   `SameSite=Lax` **does not** stop a cross-site form POST. Require either a
+   double-submit token or an `Origin`/`Sec-Fetch-Site` check on every
+   state-changing route. Cheap, and otherwise this kit ships the hole it spends
+   nine invariants avoiding upstream.
+5. **`offline_access` on Step 0 / 0b — and assert the refresh token came
+   back.** A silent absence resurfaces ~10 minutes later as a mystery
+   `invalid_grant`.
+6. **`audience` and `resource` on Step 1** — both required.
+7. **Re-mint per call.** Never persist the ID-JAG or access token; the
+   refresh token in the session is the canonical state. The ID-JAG lives
+   5 min and may be single-use.
+8. **Redact in logs** (§ Redaction).
+9. *(mcp)* **The kit mints the token; the SDK receives it.** Supply it
+   through the SDK's `authProvider` seam and leave every acquisition member
+   unimplemented. MCP's own OAuth — RFC 9728 discovery, DCR, auth-code +
+   PKCE — is an *alternative* to XAA, not a complement; the token already
+   exists. Letting it run registers a third client identity and walks into
+   the discovery leak above.
+
+Never bypass one of these to move faster — no skipped state/nonce or
+`InResponseTo`/audience check, no 401 swallowed as a 200, no type union
+widened to silence narrowing. Fix the root cause.
+
+---
+
+## Unverified against xaa.dev — ask, never guess
+
+Every `TODO(confirm)` in the kit, collected. Hitting one means **stop and ask
+the developer**; filling in a plausible value is the failure mode this list
+exists to prevent.
+
+1. **Refresh-token lifetime.** Undocumented. Invent no TTL, no countdown.
+2. **Refresh-token rotation.** Never addressed; make replacement harmless.
+3. **`prompt=consent`** — xaa.dev's demo sends it alongside `offline_access`;
+   unknown whether it's *required* to get a refresh token.
+4. **Whether `end_session_endpoint` invalidates outstanding refresh tokens.**
+   Given no revocation endpoint it's the only lever that might. Don't assume
+   it does, and don't claim it in your UI unverified.
+5. **`resource` in MCP mode.** Docs say *"the MCP URL is not the audience —
+   the resource URL is"*, yet `todo0-mcp`'s registered `resource_server_url`
+   **is** `https://mcp.xaa.dev/mcp`. Try `https://api.resource.xaa.dev` first;
+   if Step 2 succeeds but the MCP server returns *"Invalid or expired access
+   token"*, switch — that asymmetry is the tell (DEBUG D-20). Switch it with
+   **`MCP_RESOURCE`** (below), *not* by editing `RESOURCE_URL`, which is one of
+   the three fixed hosts.
+10. **Whether the IdP accepts `mcp.access` at Step 0b** (SAML+MCP only). Step 0b
+   sends `RESOURCE_SCOPES`, so it does on that path; unverified. On
+   `invalid_scope` there, retry with `openid offline_access email` and report
+   which worked.
+6. **MCP resource URI scheme.** Docs say `todo0://todos`; the IdP's resource
+   catalog says `todo://todos`. Try `todo0://` first. Also unconfirmed
+   whether `tools/list` is genuinely empty.
+7. **Whether `sub` survives alongside `sub_id`.** Draft-04 § 9.5 says `sub`
+   stays REQUIRED and `sub_id` is additive; xaa.dev's UI copy implies
+   substitution. Resolving on `sub_id` and tolerating a missing `sub` is
+   correct either way.
+8. **SAML registration fields.** The form is behind an email gate, so the var
+   name for your **SP entityID** and whether an **SP signing key** is issued
+   are both unobserved. Register, see what you're given, then add the vars you
+   actually received. Don't guess names.
+9. **Python MCP SDK parameter name** for injecting a bearer token into
+   `streamablehttp_client`. The TypeScript path is the verified one.
+
+**Specs cited by section**, if you need to check one:
+`draft-ietf-oauth-identity-assertion-authz-grant-04` (§§ 3.1, 3.2.1, 3.2.2,
+4.4.3, 4.5, 7.1, 7.2, 9.5) at
+<https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/04/>,
+and RFC 9493 (Subject Identifiers) at <https://www.rfc-editor.org/rfc/rfc9493>.
+
+> **Provenance.** The SAML material here is derived from xaa.dev's live
+> SAML metadata, its discovery fields, and its shipped browser client. As
+> of **2026-08-26** xaa.dev's prose docs at `/docs` do not cover SAML at
+> all — don't expect them to corroborate it. The OIDC material *is*
+> corroborated by `/docs`.
