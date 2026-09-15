@@ -37,7 +37,13 @@ logger, test runner.
   `vet`+`staticcheck`, Rust `deny(warnings)`+clippy, C# nullable. The
   `ok: true | false` union in Phase 4 only narrows under strict mode.
 - **Logger** → stdout, plus a **200-entry FIFO ring buffer** for Phase 5.
-  Redaction per SPEC § Redaction.
+  Redaction per SPEC § Redaction. One `LogEntry` =
+  `{ts (ISO-8601), level, category, message, data? (structured, redacted)}`,
+  where `category` is one of **`auth` · `saml` · `token-exchange` ·
+  `jwt-bearer` · `resource-call` · `mcp`** — E1/E7/E8 assert on that
+  vocabulary, so use these names. Log each upstream request's method + URL and
+  each response's status + duration; on a token-exchange entry also record
+  `step` (`0b`/`1`/`2`), `audience`, `resource`, `scope`, `expires_in`.
 - **Hermetic build** — no external service needed to install and boot.
 - *(mcp)* Add the **official** MCP SDK and nothing else — no community client,
   no hand-rolled JSON-RPC. If your language has no official SDK, tell me
@@ -168,6 +174,9 @@ token and `Accept: application/json`; decode `WWW-Authenticate` per SPEC.
 Nothing beyond your stack's HTTP client is needed.
 
 ### ▸ 3b — MCP client
+
+> Named for **Step** 3b in SPEC, but it lives in **Phase** 4 — the phases and
+> the protocol steps are numbered independently (Phase 3 covers Steps 1+2).
 
 The SDK owns the protocol; your job is to supply the XAA-minted token and
 stop the SDK acquiring its own. Point a `StreamableHTTPClientTransport` at
@@ -338,7 +347,12 @@ PKCE+state+nonce+**`offline_access`** (OIDC), or to `/saml/sso` with
 `SAMLRequest`+`RelayState` / a 200 self-POSTing form (SAML). *(mcp)* also
 `GET https://mcp.xaa.dev/health` → 200 healthy.
 
-### End-to-end, against real xaa.dev
+### End-to-end, against real xaa.dev — **developer-run, manual**
+
+These need real credentials and a browser, so **the developer runs them, not
+you.** Several also need `.env.local` edited (E3, E5) — ask them to make the
+change and report back; don't touch the file. Tell them when the build is
+ready for E1, then walk them through one scenario at a time.
 
 | # | Scenario | Setup → the decisive check |
 | --- | --- | --- |

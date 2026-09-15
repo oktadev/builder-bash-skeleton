@@ -2,9 +2,13 @@
 
 > The agent digest for this repo, per [agents.md](https://agents.md) —
 > auto-loaded by Codex, Cursor, Copilot, Windsurf, Zed, Warp, Junie, Amp,
-> Devin, goose, opencode, RooCode, Kilo, Aider and others; `CLAUDE.md`
-> imports it. **A digest, not the spec** — the spec is
-> `hackathon-kit/SPEC.md`.
+> Devin, goose, opencode, RooCode, Kilo and others; `CLAUDE.md` imports it.
+> Two need one line of config: **Aider** (`.aider.conf.yml` → `read: AGENTS.md`)
+> and **Gemini CLI** (`.gemini/settings.json` →
+> `{"context":{"fileName":"AGENTS.md"}}`). For any other filename
+> (`.clinerules`, `.windsurfrules`, `.junie/guidelines.md`) add a one-line
+> pointer here rather than copying the content — copies go stale.
+> **A digest, not the spec** — the spec is `hackathon-kit/SPEC.md`.
 
 A hackathon kit for building a **Cross-App Access (XAA) Requesting App**
 against the public xaa.dev playground. You bring the language and framework;

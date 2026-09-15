@@ -19,5 +19,9 @@
   you read, not output you pipe.
 - `.env.local` is blocked from the file tools by design. Don't work around
   it; ask the developer to fill it in.
-- `.claude/settings.json` pre-approves the kit's read-only probes, so those
-  shouldn't prompt. Anything off that list still will — expected.
+- `.claude/settings.json` pre-approves the **direct** read-only probes (plain
+  `curl` to the fixed hosts or localhost, `openssl rand`, `test -f`, `lsof`).
+  **Piped probes still prompt** — a pipeline is one compound command and
+  doesn't match a prefix rule — and that's deliberate: a blanket
+  `Bash(curl:*)` would also permit exfiltration. Expect a prompt for the
+  `| grep -q offline_access` checks.

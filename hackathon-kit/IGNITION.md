@@ -21,10 +21,11 @@ message, then wait:
 2. **App type** — `standalone` or `mcp`? *(default `standalone`: your app
    calls a REST resource with a Bearer token. `mcp` drives an MCP server
    through the official MCP SDK — one extra dependency, a fourth host.)*
-3. **Stack** — language + HTTP framework? On `saml`, also name the SAML
-   library; on `mcp`, use the **official** SDK
-   (`@modelcontextprotocol/sdk`, or `mcp` for Python) — that one is not a
-   free choice.
+3. **Stack** — language + HTTP framework? Offer me the rows from the root
+   `README.md` § Stack picker (known-good OIDC/SAML/MCP library sets) rather
+   than making me invent one. On `saml` also settle the SAML library; on `mcp`
+   the **official** SDK (`@modelcontextprotocol/sdk`, or `mcp` for Python) is
+   not a free choice.
 
 If I say "defaults", that's `oidc` + `standalone` and you still need my stack.
 **Commit to all three for the session** — never mix stacks or paths mid-build.
@@ -35,11 +36,17 @@ If I say "defaults", that's `oidc` + `standalone` and you still need my stack.
    `### ▸ …` sections are alternatives; `> **… only.**` blocks are skippable
    when they aren't yours; unmarked text applies to everyone. Don't read the
    other branch "to be thorough" — it wastes context and invites mixing them.
-2. Check `.env.local` exists at the project root. If it's missing, stop and
-   tell me to copy `.env.example` to `.env.local` and fill it in from
-   <https://xaa.dev/developer/register> (SPEC § Environment has the
-   walkthrough). **Never ask me for secrets in chat**, and never read or write
-   `.env.local` yourself.
+2. Pre-flight, and stop if any fails: `.env.local` exists at the project root
+   (if not, tell me to copy `.env.example` and fill it in from
+   <https://xaa.dev/developer/register> — SPEC § Environment; **never ask me
+   for secrets in chat**, and never read or write `.env.local` yourself);
+   `openssl` and `curl` are present; my chosen runtime is installed; and
+   **`date -u` is within ~30 s of real time** — xaa.dev allows only 30 s of
+   skew on the ID-JAG, so clock drift breaks Step 2 with an error that looks
+   like a code bug (DEBUG D-18). Also tell me the three values to put in
+   `.env.local` for `XAA_PROTOCOL`, `APP_TYPE`, and `RESOURCE_SCOPES` based on
+   my answers — the shipped defaults are `oidc`/`standalone`, so if I chose
+   otherwise the file needs editing before Phase 1's config check passes.
 3. Work through `hackathon-kit/BUILD.md` **one phase at a time** — read each
    phase when you reach it, not up front. Run that phase's single
    verification, then continue straight to the next.

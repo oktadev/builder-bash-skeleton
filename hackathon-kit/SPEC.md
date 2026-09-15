@@ -159,8 +159,10 @@ POST https://idp.xaa.dev/token
 ```
 
 Response: `{access_token, id_token, refresh_token, token_type, expires_in:600}`.
-Verify `state` matches the session's and the `id_token`'s `nonce` claim
-matches the session's nonce. **Store `refresh_token`** — the anchor. Keep
+**That `expires_in: 600` belongs to the IdP `access_token`, which this kit never
+uses — it is not the refresh token's lifetime, and not your session's.** Verify
+`state` matches the session's and the `id_token`'s `nonce` claim matches the
+session's nonce. **Store `refresh_token`** — the anchor. Keep
 the ID Token's *claims* for rendering; don't depend on it past ~10 min.
 Ignore the IdP `access_token`; this kit never uses it. Then **skip Step 0b**
 — go to Step 1.
@@ -387,7 +389,7 @@ it rather than extending it, so the UI never branches on `APP_TYPE`.
 | `expired_token` | 401 `error="invalid_token"`, description mentions expired **(Step 3)** | 401 | "Expired — retry, it re-mints" |
 | `expired_token` | `invalid_grant` from **Step 0b or Step 1** | 401 | "Session ended — sign in again" |
 | `insufficient_scope` | 403 `error="insufficient_scope"`, or `invalid_scope` | 403 | "Missing scope X" |
-| `resource_failure` | resource 5xx, network error, timeout | 502 | "Unavailable — retry" |
+| `resource_failure` | resource 5xx, any other 4xx (404, 429 …), network error, timeout | 502 | "Unavailable — retry" |
 | `token_exchange_failure` | Step 0b/1/2 OAuth error other than `invalid_grant` | 502 | "Auth server error" |
 | `config_error` | required env var missing at request time | 500 | "Misconfigured" |
 | `unknown` | unclassified | 500 | "See logs" |
@@ -417,6 +419,7 @@ Shapes — `ok` is a **literal** `true`/`false` so discriminated unions narrow.
 | --- | --- | --- |
 | **Step 3**, 401 description mentions expired | the access token | **Re-mint.** Re-run Steps 1+2, retry **exactly once**, bounded by a counter — never recursion. If the fresh token is *also* rejected, that's clock skew or config; surface it. |
 | **Step 1** `invalid_grant` | the **refresh token** | **Re-authenticate.** Set `requiresReauth`, send the user to login. **Nothing to retry** — expired, revoked and invalidated are indistinguishable and none are repairable. |
+| **Step 2** `invalid_grant` | the **ID-JAG** — stale, or `iat` outside the 30 s skew | **Neither.** Surface it; the refresh token is fine, so logging the user out is wrong. Usually a clock problem (DEBUG D-18) or a Step 1 `audience`/`resource` mismatch (D-5). |
 | **Step 0b** `invalid_grant` | the SAML assertion | **Re-authenticate.** Restart SSO. |
 
 Branch on `details.upstream_step`, never on the code alone. Conflating these
@@ -430,6 +433,9 @@ produces an infinite loop.
    `expired_token`; `error="invalid_token"` otherwise, or any other
    `error=` value → `invalid_token`.
 3. **5xx** or network failure → `resource_failure`.
+4. **Any other 4xx** (404, 400, 405, 429 …) → `resource_failure`, preserving
+   the status. The resource answered, so it isn't an auth problem — a 404 from
+   a wrong `RESOURCE_PATH` is the common case.
 
 Treat the parse as best-effort — never crash on a missing header. If your
 "expired" match fails while curl clearly shows the substring, URL-decode
@@ -533,14 +539,17 @@ CLIENT_SECRET=
 RESOURCE_CLIENT_ID=               # resource AS client — Step 2
 RESOURCE_CLIENT_SECRET=
 
-# --- APP_TYPE=standalone only ---
+# --- Pick ONE of the next two blocks, per APP_TYPE ---
+# APP_TYPE=standalone
 RESOURCE_PATH=/api/todos
 RESOURCE_SCOPES=todos.read
 
-# --- APP_TYPE=mcp only ---
-MCP_SERVER_URL=https://mcp.xaa.dev/mcp
-MCP_PROTOCOL_VERSION=2025-03-26
-# RESOURCE_SCOPES=todos.read mcp.access   # BOTH required in MCP mode
+# APP_TYPE=mcp — uncomment these AND comment out RESOURCE_SCOPES above.
+# Leaving todos.read alone here is D-20, the most common MCP failure: the
+# token mints cleanly and the MCP server then refuses it.
+# MCP_SERVER_URL=https://mcp.xaa.dev/mcp
+# MCP_PROTOCOL_VERSION=2025-03-26
+# RESOURCE_SCOPES=todos.read mcp.access
 
 APP_URL=http://localhost:3000
 

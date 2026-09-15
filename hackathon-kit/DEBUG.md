@@ -28,6 +28,10 @@ failed attempts on one issue, stop and report.
 
 ## SAML
 
+**Also check D-8** (above, under OIDC login) — its SAML half is the
+cross-site-POST cookie problem, and it's the SAML failure you're most likely
+to hit first.
+
 | # | Path | Symptom | Cause → fix |
 | --- | --- | --- | --- |
 | D-14 | SAML | Step 0b returns `invalid_grant` / `invalid_request` / a parse error — **or nothing arrives at your ACS at all** | If nothing arrives: your registered ACS URL doesn't match `SAML_ACS_URL`, and unlike D-1 this fails **silently**. Check byte-exactness first. Otherwise, in the order they bite: (1) you sent the whole `SAMLResponse` instead of the bare `<saml:Assertion>`; (2) standard padded base64 instead of base64url-unpadded — in a form body `+` becomes a space, so you get a parse error not a clean rejection; (3) you re-serialised the XML and broke the signature — parse to verify, send original bytes; (4) the SAML Audience doesn't map to your `CLIENT_ID` (draft-04 § 4.5), which fails here rather than at SSO; (5) `offline_access` missing from the Step 0b scope → 200 with no refresh token, see D-17. Print the first 80 chars of `subject_token` and confirm no `+`, `/`, or `=`. |
