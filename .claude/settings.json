@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(curl -sS https://idp.xaa.dev/*)",
+      "Bash(curl -sS https://auth.resource.xaa.dev/*)",
+      "Bash(curl -sS https://api.resource.xaa.dev/*)",
+      "Bash(curl -sS https://mcp.xaa.dev/*)",
+      "Bash(curl -sS -i https://idp.xaa.dev/*)",
+      "Bash(curl -sS -i https://mcp.xaa.dev/*)",
+      "Bash(curl -sS http://localhost:*)",
+      "Bash(curl -sS -i http://localhost:*)",
+      "Bash(curl -sS -X POST http://localhost:*)",
+      "Bash(curl -sS -o /dev/null -w * http://localhost:*)",
+      "Bash(openssl rand *)",
+      "Bash(openssl version)",
+      "Bash(test -f *)",
+      "Bash(lsof -i *)",
+      "Bash(date -u)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.*.local)",
+      "Read(./keys/**)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)"
+    ]
+  }
+}
