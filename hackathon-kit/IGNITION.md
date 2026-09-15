@@ -80,10 +80,23 @@ later session resumes on the same path instead of re-asking.
 
 ## Appendix — chat-only tools (no filesystem access)
 
-Using ChatGPT in a browser, or any tool that can't read your repo? Paste
-manually instead: this file, then `SPEC.md` (your branches only), then each
-`BUILD.md` phase as you reach it. Apply the output by hand, run the
-verification yourself, and paste failures back with the matching `D-N`
-entry from `DEBUG.md`. You'll also need to do Day 0 yourself — see the root
-`README.md`. The agentic flow above is dramatically shorter because the
-agent reads the files itself; prefer it when you can.
+Using ChatGPT in a browser, or any tool that can't read your repo? **Don't
+paste the section above** — it tells the model to read files and check
+`.env.local`, which it can't do, so it will either stall or claim it did.
+
+Do Day 0 yourself first (root `README.md`), including `openssl rand -base64 32`
+for `SESSION_SECRET`. Then paste this instead, filling in the two brackets:
+
+> I'm building a Cross-App Access (XAA) Requesting App against the xaa.dev
+> playground, on the **[oidc|saml]** protocol path as a
+> **[standalone|mcp]** app, in **[my stack]**. I'll paste the spec next.
+> Don't write code until I ask — reply "ready" and wait.
+
+Then paste, one message each, waiting for an acknowledgement between: `SPEC.md`
+(your branches only — skip `### ▸` sections and `> **… only.**` blocks that
+aren't yours), then each `BUILD.md` phase as you reach it. Apply the output by
+hand and run each phase's verification yourself. On failure, paste the matching
+`D-N` entry from `DEBUG.md` plus your actual output. You're done when E1 and E6
+pass (`BUILD.md` § Phase 6) — record the result in `FINAL_VALIDATION.md`.
+
+The agentic flow above is far less work; prefer it when you can.
