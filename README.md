@@ -21,93 +21,91 @@
 
 A recipe you hand to an AI coding agent so it builds you a small web
 app that logs a user in and calls a protected API on their behalf 
-against a public practice playground, [xaa.dev](https://xaa.dev). You
-pick the programming language; the kit tells the agent exactly what to
-build and how to check its own work.
+against a public practice playground, [xaa.dev](https://xaa.dev). Build
+it to learn Cross-App Access (XAA) hands-on; the delegation pattern
+behind AI agents securely acting on a user's behalf across apps 
+without reading four RFCs first. You pick the programming language; the
+kit tells the agent exactly what to build and how to check its own
+work.
 
 ---
 
 ## Quick start
 
-### **What do I need on my laptop before I start?**
-Two things, installed and ready to go *before* you touch anything
-below:
+1. **Install the prerequisites.** Two things, installed and ready to
+   go *before* you touch anything below:
+   - **Git** — to get the kit onto your machine. Check in your
+     terminal:
+     ```bash
+     git --version
+     ```
+     Don't have it? [git-scm.com/downloads](https://git-scm.com/downloads).
+   - **An AI coding agent** — this kit is a set of instructions you
+     hand to one; it writes the actual code. Any agent with filesystem
+     + shell access works: [Claude Code](https://claude.com/claude-code),
+     [Cursor](https://cursor.com), [OpenAI Codex CLI](https://openai.com/codex/),
+     [Aider](https://aider.chat), or GitHub Copilot's coding agent.
+     Have it installed and able to open a terminal in a project folder
+     — ask at the booth if you're not sure yours can do that.
 
-- **Git** — to get the kit onto your machine. Check in your terminal: 
-```bash 
-git --version
-```
-  Don't have it? [git-scm.com/downloads](https://git-scm.com/downloads).
-- **An AI coding agent** — this kit is a set of instructions you hand
-  to one; it writes the actual code. Any agent with filesystem + shell
-  access works: [Claude Code](https://claude.com/claude-code),
-  [Cursor](https://cursor.com), [OpenAI Codex CLI](https://openai.com/codex/),
-  [Aider](https://aider.chat), or GitHub Copilot's coding agent. Have
-  it installed and able to open a terminal in a project folder — ask
-  at the booth if you're not sure yours can do that.
+   Everything else in this README assumes both are already working.
 
-Everything else in this README assumes both are already working.
+2. **Get the kit.** Clone the repo and get inside the project — run
+   this in your terminal:
+   ```bash
+   git clone https://github.com/oktadev/builder-bash-skeleton.git
+   cd builder-bash-skeleton
+   ```
 
-### **How do I get the kit?**
-Clone the repo and get inside the project.... Use the below command in your terminal window
+3. **Copy the env template.** Run this in your terminal:
+   ```
+   cp .env.example .env.local
+   ```
+   Every xaa.dev credential you get in the next step goes into this
+   file; it's gitignored and never touched by the agent.
 
-```bash
-git clone https://github.com/oktadev/builder-bash-skeleton.git
-cd builder-bash-skeleton
-```
+4. **Register and get your credentials.** In order to get your
+   credentials from XAA.dev, you have to register your application to
+   get the client ID/secret pairs.
 
-### **Where do I get the template?**
-Copy the env template — run the below command in your terminal: 
+   To register your app at [xaa.dev](https://xaa.dev/developer/register/):
 
-``` 
-cp .env.example .env.local
-```
-Every xaa.dev credential you get in the next step goes into this file; it's
-gitignored and never touched by the agent.
+   1. Enter an email to sign in — it's a fake-account namespacing key,
+      not a real login. Every app you register is scoped to it.
+   2. Click **+ Register New App** and fill in:
+      - **Redirect URI** — `http://localhost:3000/api/auth/callback`
+        (that's `${APP_URL}/api/auth/callback`; only change it if you
+        changed `APP_URL`'s port, and re-register if you do — it must
+        match `.env.local` byte-for-byte).
+      - **Resource + scopes (`RESOURCE_SCOPES`)** — depends on the
+        `APP_TYPE` you're building: `todos.read` for **standalone**
+        (the default), or `todos.read mcp.access` for an **MCP client**
+        (both scopes required).
+   3. Submit. The credentials modal hands you **two separate client
+      pairs**: `CLIENT_ID`/`CLIENT_SECRET` (main, used at the IdP) and
+      `RESOURCE_CLIENT_ID`/`RESOURCE_CLIENT_SECRET` (used at the
+      resource auth server). They're not interchangeable — mixing them
+      up is the most common cause of `invalid_client`.
+   4. Paste all four values into `.env.local`.
 
-### **Where do I get my credentials?**
+   Stuck? Full walkthrough: `hackathon-kit/reference/env-vars.md` §
+   Registration walkthrough.
 
-In order to get your credentials from XAA.dev, you would have to register your application to get the client IDs/secrets pairs. 
+5. **Start building.** Paste `hackathon-kit/IGNITION.md` into your AI
+   agent's first message. It reads the rest of the kit itself and asks
+   you an app-type question and a stack question — answer those and it
+   starts building.
 
-To register your app at [xaa.dev](https://xaa.dev/developer/register/):
-
-1. Enter an email to sign in — it's a fake-account namespacing key,
-   not a real login. Every app you register is scoped to it.
-2. Click **+ Register New App** and fill in:
-   - **Redirect URI** — `http://localhost:3000/api/auth/callback`
-     (that's `${APP_URL}/api/auth/callback`; only change it if you
-     changed `APP_URL`'s port, and re-register if you do — it must
-     match `.env.local` byte-for-byte).
-   - **Resource + scopes (`RESOURCE_SCOPES`)** — depends on the
-     `APP_TYPE` you're building: `todos.read` for **standalone**
-     (the default), or `todos.read mcp.access` for an **MCP client**
-     (both scopes required).
-3. Submit. The credentials modal hands you **two separate client
-   pairs**: `CLIENT_ID`/`CLIENT_SECRET` (main, used at the IdP) and
-   `RESOURCE_CLIENT_ID`/`RESOURCE_CLIENT_SECRET` (used at the resource
-   auth server). They're not interchangeable — mixing them up is the
-   most common cause of `invalid_client`.
-4. Paste all four values into `.env.local`.
-
-Stuck? Full walkthrough: `hackathon-kit/reference/env-vars.md` §
-Registration walkthrough.
-
-### **How do I actually start building?**
-Get inside your AI coding agents and paste `hackathon-kit/IGNITION.md` into your AI agent's first message.
-It reads the rest of the kit itself and asks you an app-type question
-and a stack question — answer those and it starts building.
-
-### **Who starts the server once it's built?**
-You do, in your own terminal — see *How do I start and stop my
-server?* below. The agent tells you the command; it never runs it for
-you.
+6. **Start the server yourself, once it's built.** You do, in your own
+   terminal — see *How do you start and stop your server?* below. The
+   agent tells you the command; it never runs it for you.
 
 The rest of this README fills in detail on each of these if you get
 stuck.
 
 ---
 
-## How do I start and stop my server?
+## How do you start and stop your server?
 
 **The agent never starts or stops your dev server for you.** Once
 `01-project-skeleton.md` is scaffolded, your agent tells you the exact
@@ -134,7 +132,7 @@ already running in the background.
 
 ---
 
-## What am I actually building?
+## What are you actually building?
 
 A small server-side web app that:
 
@@ -158,7 +156,7 @@ and "the session is over, sign in again."
 
 ---
 
-## Do I need to choose anything?
+## Do you need to choose anything?
 
 Just one thing — how your app uses the token (`APP_TYPE`). Protocol
 isn't a choice here: this kit builds **OIDC only**
@@ -185,7 +183,7 @@ connects.
 
 ---
 
-## What am I free to choose myself?
+## What are you free to choose yourself?
 
 | Power                                | What that means                                                                                                                                                                                            |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -194,7 +192,7 @@ connects.
 | **Pick any session strategy**        | Sealed httpOnly cookie or server-stored (Redis / SQLite / Postgres) — as long as no raw token reaches the browser and the cookie is httpOnly + `SameSite=Lax`. |
 | **Pick any UI shape**                | Server-rendered templates, an SPA, a TUI, plain HTML — the kit only specifies what must be visible (redacted tokens, the latest ID-JAG, a request timeline).        |
 | **Bring Your Own Resource (BYOR)**   | Default resource is `https://api.resource.xaa.dev/api/todos`, but `RESOURCE_PATH` (and `RESOURCE_URL` for another resource server) can point anywhere xaa.dev knows. |
-| **Bring your own AI agent**          | OpenAI Codex, Claude Code, Cursor, Aider, Copilot, ChatGPT, Cody — see *How do I tell my AI agent to start?* below.                                                                     |
+| **Bring your own AI agent**          | OpenAI Codex, Claude Code, Cursor, Aider, Copilot, ChatGPT, Cody — see *How do you tell your AI agent to start?* below.                                                                     |
 | **Customise scopes + claims**        | `RESOURCE_SCOPES` controls what you ask for; the kit already handles `insufficient_scope` if you ask for too much.                                                                       |
 | **Extend the test matrix**           | The tests in `hackathon-kit/07-testing.md` are the *minimum*, not the ceiling.          |
 
@@ -233,7 +231,7 @@ retry the second one.
 
 ---
 
-## How do I tell my AI agent to start?
+## How do you tell your AI agent to start?
 
 | Your tool                                            | Do this                                                                                                          |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
@@ -253,7 +251,7 @@ first — the digest is a summary, not a substitute.
 
 ---
 
-## What do I need installed before I start?
+## What do you need installed before you start?
 
 | Need                   | Why                                                                 | Quick check             |
 | ---------------------- | ------------------------------------------------------------------- | ----------------------- |
@@ -271,7 +269,7 @@ in PowerShell as a fallback.
 
 ---
 
-## Which libraries should I use for my stack?
+## Which libraries should you use for your stack?
 
 You can use anything that speaks HTTPS, parses JSON, can SHA-256 +
 base64url, and stores an httpOnly encrypted cookie. If you want a
@@ -329,7 +327,7 @@ your AI) → **Objective** → **Output** → **Issues** → **Fixes** →
 
 ---
 
-## What happens, step by step, once I'm building?
+## What happens, step by step, once you're building?
 
 The kit is **hard-gated** — one step at a time, in order:
 `01 → 02 → 03 → 04 → 05 → 07`. After each step the agent runs
@@ -354,7 +352,7 @@ add token exchange to an existing app.
 
 ---
 
-## Can I go further than the basics?
+## Can you go further than the basics?
 
 - **BYOR (Bring Your Own Resource).** Register a second resource auth
   server with xaa.dev, point `RESOURCE_URL` + `RESOURCE_CLIENT_*` at it,
