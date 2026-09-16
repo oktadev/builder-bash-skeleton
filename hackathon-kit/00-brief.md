@@ -13,11 +13,15 @@ stack you're fastest in (Python / Go / Rust / Java / Ruby / Node / .NET
 / Elixir / etc.) — the prompts that follow describe behaviour and wire
 format, not libraries.
 
-## Choose your two paths
+## Choose your path
 
-**Answer both before writing anything.** They're independent.
+**Answer the application-type question before writing anything.**
 
 ### 1. Protocol — how you log in (`XAA_PROTOCOL`)
+
+**Fixed to `oidc`.** Don't ask the dev to choose, and don't offer,
+implement, or read the SAML path. The table below is reference for a future
+SAML build.
 
 | Path                 | What Step 0 looks like                                        | Pick it when                                                             |
 | -------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |

@@ -24,16 +24,17 @@ Read `hackathon-kit/IGNITION.md` end-to-end. It has the pre-flight
 checks, the two decisions below, the hard-gated execution loop, and the
 full invariant list.
 
-## Three decisions, in this order
+## Two decisions to ask, in this order
 
-1. **Protocol path — `XAA_PROTOCOL=oidc|saml`.** How the user logs in.
-   **OIDC is the default.**
-2. **Application type — `APP_TYPE=standalone|mcp`.** What the access
+1. **Application type — `APP_TYPE=standalone|mcp`.** What the access
    token is used for. **standalone is the default.**
-3. **Stack.** Ask once, then commit for the session.
+2. **Stack.** Ask once, then commit for the session.
 
-Ask 1 and 2 *before* the stack question — both affect it (SAML needs XML
-signature tooling; MCP needs the official SDK).
+Ask 1 *before* the stack question — MCP needs the official SDK.
+
+**Protocol is not a question.** `XAA_PROTOCOL` is **fixed to `oidc`**.
+Don't ask, don't offer, don't read the SAML path. See
+`hackathon-kit/IGNITION.md` section 2, which is authoritative.
 
 Never implement both protocols or both app types. `### ▸ …` sections are
 alternatives; `> **… only.**` blocks are skippable when they aren't
@@ -121,11 +122,11 @@ called out because they're where agents actually drift:
 
 ## Session choices
 
-- **`APP_TYPE=standalone`** — default, no MCP dependency.
-- **Stack: Node/TypeScript** — Express, `openid-client@6`, `iron-session`
-  (sealed httpOnly cookie, `xaa_session`), `vitest`. Project lives at the
-  repo root (`package.json`, `src/`, `test/`), alongside `hackathon-kit/`.
-  Boot with `npm run dev`.
+**Leave empty.** Don't commit choices here.
+
+A committed choice reads as the dev's own earlier decision, so the agent
+skips the questions instead of asking. If you find concrete choices below
+this line, delete them.
 
 ## Fixed environment (xaa.dev)
 
@@ -143,15 +144,29 @@ access token ~2 h, refresh token **undocumented**. **No revocation
 endpoint exists.**
 
 Credentials come from <https://xaa.dev/developer/register> — it has an
-**OIDC | SAML tab toggle**; use the tab matching the chosen path. The dev
-fills `.env.local` themselves; never solicit secrets in chat.
+**OIDC | SAML tab toggle**; use the **OIDC** tab. The dev fills
+`.env.local` themselves; never solicit secrets in chat.
+
+Four values, two screens:
+
+1. Under **Resource Connections**, **Add Resource** → **`todo0`**
+   (`todo0-mcp` for `APP_TYPE=mcp`). Without it there is no second pair.
+2. Register App shows only `CLIENT_ID` / `CLIENT_SECRET`. The resource pair
+   is on that app's **Integration Guide** page.
+
+All four must come from the same app — check `RESOURCE_CLIENT_ID` reads
+`{CLIENT_ID}-at-todo0`. A mismatched prefix causes `invalid_redirect_uri`
+on a correct redirect URI, and `invalid_client` on Step 2.
+
+**Restart the dev server after editing `.env.local`** — it's read at boot
+and cached.
 
 ## When stuck
 
-`hackathon-kit/06-debugging-playbook.md` catalogs nineteen failure shapes
-with diagnostic prompts, indexed by path. D-14–D-16 are SAML, D-6/D-7/D-12
-are OIDC-only, D-17–D-19 cover refresh tokens, clock skew and retry
-storms. If none match, the curl recipes at the bottom isolate client bugs
-from server/registration bugs.
+`hackathon-kit/06-debugging-playbook.md` catalogs twenty-three failure
+shapes with diagnostic prompts, indexed by path. D-14–D-16 are SAML,
+**D-20–D-23 are MCP**, D-6/D-7/D-12 are OIDC-only, D-17–D-19 cover refresh
+tokens, clock skew and retry storms. If none match, the curl recipes at the
+bottom isolate client bugs from server/registration bugs.
 
 After ~5 failed attempts on the same issue, stop and report.
