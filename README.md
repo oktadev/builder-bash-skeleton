@@ -33,9 +33,9 @@ build and how to check its own work.
 Two things, installed and ready to go *before* you touch anything
 below:
 
-- **Git** — to get the kit onto your machine. Check: 
+- **Git** — to get the kit onto your machine. Check in your terminal: 
 ```bash 
-git --version`
+git --version
 ```
   Don't have it? [git-scm.com/downloads](https://git-scm.com/downloads).
 - **An AI coding agent** — this kit is a set of instructions you hand
@@ -52,9 +52,9 @@ Everything else in this README assumes both are already working.
 Clone the repo and get inside the project.... Use the below command in your terminal window
 
 ```bash
-  git clone https://github.com/oktadev/builder-bash-skeleton.git
-  cd builder-bash-skeleton
-  ```
+git clone https://github.com/oktadev/builder-bash-skeleton.git
+cd builder-bash-skeleton
+```
 
 ### **Where do I get the template?**
 Copy the env template — run the below command in your terminal: 
@@ -66,14 +66,34 @@ Every xaa.dev credential you get in the next step goes into this file; it's
 gitignored and never touched by the agent.
 
 ### **Where do I get my credentials?**
-Register your app at [xaa.dev](https://xaa.dev/?have=requesting&want=register&via=oidc)
-and paste the client IDs/secrets it gives you into `.env.local`. Sign
-in with a fake email — it's a practice playground, not a real account.
+
+In order to get your credentials from XAA.dev, you would have to register your application to get the client IDs/secrets pairs. 
+
+To register your app at [xaa.dev](https://xaa.dev/developer/register/):
+
+1. Enter an email to sign in — it's a fake-account namespacing key,
+   not a real login. Every app you register is scoped to it.
+2. Click **+ Register New App** and fill in:
+   - **Redirect URI** — `http://localhost:3000/api/auth/callback`
+     (that's `${APP_URL}/api/auth/callback`; only change it if you
+     changed `APP_URL`'s port, and re-register if you do — it must
+     match `.env.local` byte-for-byte).
+   - **Resource + scopes (`RESOURCE_SCOPES`)** — depends on the
+     `APP_TYPE` you're building: `todos.read` for **standalone**
+     (the default), or `todos.read mcp.access` for an **MCP client**
+     (both scopes required).
+3. Submit. The credentials modal hands you **two separate client
+   pairs**: `CLIENT_ID`/`CLIENT_SECRET` (main, used at the IdP) and
+   `RESOURCE_CLIENT_ID`/`RESOURCE_CLIENT_SECRET` (used at the resource
+   auth server). They're not interchangeable — mixing them up is the
+   most common cause of `invalid_client`.
+4. Paste all four values into `.env.local`.
+
 Stuck? Full walkthrough: `hackathon-kit/reference/env-vars.md` §
 Registration walkthrough.
 
 ### **How do I actually start building?**
-Paste `hackathon-kit/IGNITION.md` into your AI agent's first message.
+Get inside your AI coding agents and paste `hackathon-kit/IGNITION.md` into your AI agent's first message.
 It reads the rest of the kit itself and asks you an app-type question
 and a stack question — answer those and it starts building.
 
@@ -93,15 +113,19 @@ stuck.
 `01-project-skeleton.md` is scaffolded, your agent tells you the exact
 boot command for your stack. It looks like one of these:
 
-| Stack            | Start command                                    |
-| ---------------- | ------------------------------------------------- |
-| Python / FastAPI | `uvicorn xaa_app.main:app --reload --port 3000`   |
-| Node / Express   | `npm run dev`                                     |
-| Go / chi         | `go run ./cmd/server`                             |
-| Rust / Axum      | `cargo run`                                       |
-| Java / Spring    | `./gradlew bootRun` (or `mvn spring-boot:run`)    |
-| Ruby / Rails     | `bin/rails server`                                |
-| .NET             | `dotnet run`                                      |
+| Stack            | Start command                                    | Download                                                        |
+| ---------------- | ------------------------------------------------- | ---------------------------------------------------------------- |
+| Python / FastAPI | `uvicorn xaa_app.main:app --reload --port 3000`   | [python.org/downloads](https://www.python.org/downloads/)        |
+| Node / Express   | `npm run dev`                                     | [nodejs.org/download](https://nodejs.org/en/download)             |
+| Go / chi         | `go run ./cmd/server`                             | [go.dev/dl](https://go.dev/dl/)                                   |
+| Rust / Axum      | `cargo run`                                       | [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install) |
+| Java / Spring    | `./gradlew bootRun` (or `mvn spring-boot:run`)    | [oracle.com/java](https://www.oracle.com/java/technologies/downloads/) |
+| Ruby / Rails     | `bin/rails server`                                | [ruby-lang.org/downloads](https://www.ruby-lang.org/en/downloads/) |
+| .NET             | `dotnet run`                                      | [dotnet.microsoft.com/download](https://dotnet.microsoft.com/download) |
+
+Before you run these commands, make sure the runtime for your stack is
+actually installed. If not, grab it from the official download link
+above.
 
 Ask your agent for the exact command if your entrypoint differs.
 
