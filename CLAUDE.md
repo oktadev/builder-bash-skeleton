@@ -10,11 +10,12 @@
 ## Claude Code specifics
 
 - **First action:** read `hackathon-kit/IGNITION.md` end-to-end, then ask
-  the dev the protocol question (OIDC or SAML) before the stack question.
-- When you learn the dev's protocol and stack choices, record them here
-  under a `## Session choices` heading so a later session resumes on the
-  same path instead of re-asking.
+  the dev the application type (`standalone` or `mcp`) before the stack
+  question. Protocol is fixed to OIDC — don't ask, don't read the SAML path.
+- Don't record the dev's choices in a tracked file. Ask each session — a
+  committed choice pre-answers the next developer's decisions.
 - Prefer the Read/Edit tools over shell `cat`/`sed` when walking the kit —
   `hackathon-kit/` is a spec you read, not output you pipe.
-- `.env.local` is blocked from the file tools by design. Don't work around
-  it; ask the dev to fill it in themselves.
+- **Never read, print, or diff `.env.local`**, including via `cat`, `grep`
+  or `diff`. Nothing in the repo enforces this. Ask the dev to fill it in
+  themselves.

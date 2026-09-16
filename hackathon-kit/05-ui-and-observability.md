@@ -6,6 +6,15 @@
 > the UI is up to you (server-rendered templates, SPA, TUI, even a
 > minimal HTML page) — but it must surface these states clearly.
 >
+> **Style it like a real product, not browser defaults.** A deliberate
+> color palette (light or dark, your call), real spacing, readable
+> typography, and visible hover/disabled/active states on every button
+> and link — not unstyled `<button>`s and default blue underlined `<a>`
+> tags on a white background. Ship a stylesheet (hand-written or a CSS
+> framework, either is fine) alongside the templates in the Output
+> table below. Every state this Prompt lists — alerts, badges, the log
+> table — must be legible *and* look intentional, not just present.
+>
 > **Pages**
 >
 > - `/login` — sign-in entry. Surface any `?error=` from the callback
@@ -105,6 +114,7 @@ in-app visibility to debug end-to-end without opening DevTools.
 | Token state component            | Renders **refresh-token** presence (redacted) + scopes from `/api/auth/session`. States expiry as unknown rather than guessing. |
 | Subject renderer                 | Prefers `sub_id` (SAML, with `issuer` + `sp_name_qualifier`), falls back to `sub` (OIDC). |
 | Log viewer component             | Polls `/api/logs`. 1.5–2 s interval.                                 |
+| Stylesheet                       | Consistent color, spacing, and typography across all pages — not browser defaults. |
 
 ## Decisions to make
 
@@ -181,3 +191,8 @@ End-to-end visual check (E1):
    **no new `auth` line** — the refresh token was reused. This is the E6
    check and the fastest way to catch a build that still anchors on the
    ID Token.
+6. **Eyeball the styling.** No default blue underlined links, no
+   unstyled browser-default buttons, consistent spacing and color
+   across the login page, dashboard cards, and log table. If it looks
+   like an un-styled HTML page, it doesn't pass this check — go back
+   and add the stylesheet from the Prompt.
