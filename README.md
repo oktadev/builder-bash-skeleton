@@ -96,9 +96,39 @@ retry the second one.
 | `.env.local`           | `cp .env.example .env.local`, then fill in your credentials.        | `test -f .env.local`    |
 | xaa.dev account        | Registered with **two** client pairs + your callback URI, on the **OIDC tab**. | See `hackathon-kit/reference/env-vars.md` § Registration walkthrough. |
 
-Windows: use Git Bash / WSL for the curl + openssl commands. Generate
-`SESSION_SECRET` with `[Convert]::ToBase64String((1..32 | %{Get-Random -Min 0 -Max 256}))`
-in PowerShell as a fallback.
+On Windows? See *Running this on Windows* below before you go further.
+
+---
+
+## Running this on Windows
+
+Most attendees are on Windows, so this gets its own section instead of
+a buried footnote. Every command in this README (`git`, `curl`,
+`openssl`, the stack start commands, the Verification steps throughout
+`hackathon-kit/`) assumes a Unix-like shell. Pick one before you start:
+
+- **Git Bash** — installed automatically with
+  [Git for Windows](https://git-scm.com/downloads/win). Right-click in
+  your project folder → "Git Bash Here," or open it from the Start
+  menu. Has `git`, `curl`, and `openssl` out of the box — this is the
+  easiest option if you're installing Git anyway.
+- **WSL** (Windows Subsystem for Linux) — a full Linux environment.
+  More setup, but closer to what your AI agent's shell tooling expects
+  if it starts generating Unix-specific scripts.
+
+Run every command in this README from one of those two, not from
+`cmd.exe` or plain PowerShell — the syntax throughout is Bash.
+
+**The one command that's genuinely different:** generating
+`SESSION_SECRET` (Quick Start step 4). If Git Bash's bundled `openssl`
+isn't on your `PATH` for some reason, generate it in PowerShell
+instead:
+```powershell
+[Convert]::ToBase64String((1..32 | %{Get-Random -Min 0 -Max 256}))
+```
+
+**No `git` installed yet?** Quick Start step 2 has a zip-download
+alternative (`curl`/PowerShell) that gets you the repo without it.
 
 ---
 
@@ -152,6 +182,20 @@ first — the digest is a summary, not a substitute.
    cd builder-bash-skeleton
    ```
 
+   No `git`, or don't want to install it? Download a zip and unzip it
+   instead:
+   ```bash
+   curl -L -o builder-bash-skeleton.zip https://github.com/oktadev/builder-bash-skeleton/archive/refs/heads/main.zip
+   unzip builder-bash-skeleton.zip
+   cd builder-bash-skeleton-main
+   ```
+   On Windows PowerShell:
+   ```powershell
+   Invoke-WebRequest -Uri https://github.com/oktadev/builder-bash-skeleton/archive/refs/heads/main.zip -OutFile builder-bash-skeleton.zip
+   Expand-Archive builder-bash-skeleton.zip
+   cd builder-bash-skeleton-main
+   ```
+
 3. **Copy the env template.** Run this in your terminal:
    ```
    cp .env.example .env.local
@@ -167,8 +211,8 @@ first — the digest is a summary, not a substitute.
    openssl rand -base64 32
    ```
    and paste the output into `SESSION_SECRET` in `.env.local`. No
-   `openssl` on this machine? See *What do you need installed before
-   you start?* above for the Windows fallback.
+   `openssl` on this machine? See *Running this on Windows* above for
+   the PowerShell fallback.
 
 5. **Register and get your credentials.** In order to get your
    credentials from XAA.dev, you have to register your application to
@@ -267,11 +311,11 @@ known-good default instead of researching it yourself:
 | --------------- | --------------------------- | ---------------------------------------------------- | --------------------------- | --------------------------------- | ------------- |
 | **Python**      | FastAPI                     | `authlib` or `oic`                                   | **`mcp`** (official)        | `itsdangerous` cookie / Redis    | `pytest`      |
 | **Node/TS**     | Express / Fastify / Next.js | `openid-client@6`                                    | **`@modelcontextprotocol/sdk`** (official) | `iron-session` (sealed cookie)   | `vitest`      |
-| **Go**          | `chi` / Gin                 | `coreos/go-oidc` + `golang.org/x/oauth2`             | see note below              | `gorilla/sessions` (cookie store)| `go test`     |
+| **Go**          | `chi` / Gin                 | `coreos/go-oidc` + `golang.org/x/oauth2`             | **[modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk)** (official) | `gorilla/sessions` (cookie store)| `go test`     |
 | **Rust**        | Axum                        | `openidconnect`                                      | see note below              | `tower-sessions` (cookie/Redis)  | `cargo test`  |
 | **Java/Kotlin** | Spring Boot                 | `spring-security-oauth2-client`                      | see note below              | Spring Session                   | JUnit 5       |
 | **Ruby**        | Rails / Sinatra             | `omniauth_openid_connect`                            | see note below              | Rails session (cookie)           | RSpec         |
-| **.NET**        | ASP.NET Core                | `Microsoft.AspNetCore.Authentication.OpenIdConnect`  | see note below              | Cookie auth handler              | xUnit         |
+| **.NET**        | ASP.NET Core                | `Microsoft.AspNetCore.Authentication.OpenIdConnect`  | **[modelcontextprotocol/csharp-sdk](https://github.com/modelcontextprotocol/csharp-sdk)** (official) | Cookie auth handler              | xUnit         |
 
 > **Picking MCP?** Use the *official* SDK for your language — check
 > <https://modelcontextprotocol.io> if yours isn't listed above. If
