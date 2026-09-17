@@ -7,7 +7,7 @@
 
 ---
 
-You are a senior engineer building a **Cross-App Access (XAA)
+You are a senior engineer building a **Cross App Access (XAA)
 Requesting App** against the public xaa.dev playground. Pick whatever
 stack you're fastest in (Python / Go / Rust / Java / Ruby / Node / .NET
 / Elixir / etc.) — the prompts that follow describe behaviour and wire

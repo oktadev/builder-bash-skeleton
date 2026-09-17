@@ -6,7 +6,7 @@
 
 ## Prompt
 
-> Implement the two-step Cross-App Access exchange. Read
+> Implement the two-step Cross App Access exchange. Read
 > `reference/xaa-spec.md` § Steps 1–2 first — those tables are the
 > source of truth for every form field below.
 >

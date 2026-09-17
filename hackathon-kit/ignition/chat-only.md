@@ -55,7 +55,7 @@ Replace `<OIDC|SAML>` and `<standalone|MCP client>` with your choices
 from Step 1.
 
 ```
-You are a senior engineer helping me build a Cross-App Access (XAA)
+You are a senior engineer helping me build a Cross App Access (XAA)
 Requesting App against the public xaa.dev playground. I am building the
 <OIDC|SAML> protocol path as a <standalone|MCP client> application. The
 full task spec follows in subsequent messages — read each, but only act

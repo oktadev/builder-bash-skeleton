@@ -12,7 +12,7 @@
 > session anchor. **This kit builds OIDC only** — SAML support has
 > been dropped.
 > **Status:** Tested against `xaa.dev` as of **2026-08-26**.
-> Targets: Cross-App Access (ID-JAG) draft-04, RFC 8693 (Token Exchange),
+> Targets: Cross App Access (ID-JAG) draft-04, RFC 8693 (Token Exchange),
 > RFC 7523 (JWT-Bearer), RFC 7636 (PKCE), RFC 6750 (Bearer +
 > WWW-Authenticate), RFC 8414 (Auth Server Metadata), RFC 9493 (Subject
 > Identifiers).
@@ -22,7 +22,7 @@
 A recipe you hand to an AI coding agent so it builds you a small web
 app that logs a user in and calls a protected API on their behalf 
 against a public practice playground, [xaa.dev](https://xaa.dev). Build
-it to learn Cross-App Access (XAA) hands-on; the delegation pattern
+it to learn Cross App Access (XAA) hands-on; the delegation pattern
 behind AI agents securely acting on a user's behalf across apps 
 without reading four RFCs first. You pick the programming language; the
 kit tells the agent exactly what to build and how to check its own

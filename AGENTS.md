@@ -10,7 +10,7 @@
 
 ## What this repo is
 
-A **hackathon kit** for building a Cross-App Access (XAA) Requesting App
+A **hackathon kit** for building a Cross App Access (XAA) Requesting App
 against the public xaa.dev playground. The kit at `hackathon-kit/` is the
 **authoritative spec** — wire format, error codes, env-var contract,
 verification commands. You bring the language and framework; the kit

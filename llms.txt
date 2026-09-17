@@ -1,6 +1,6 @@
 # XAA Hackathon Kit (v3)
 
-> A spec-first prompt kit for building a Cross-App Access (XAA)
+> A spec-first prompt kit for building a Cross App Access (XAA)
 > Requesting App against the public xaa.dev playground — in any
 > language or framework. Two protocol paths (OIDC + PKCE, or SAML 2.0
 > Web Browser SSO) converging on an IdP refresh token as the session

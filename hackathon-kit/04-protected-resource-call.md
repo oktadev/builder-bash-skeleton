@@ -204,7 +204,7 @@ interface AuthProvider {
 (the transport retries exactly once, then throws). v2 also ships an
 `IdJagTokenExchangeResponseSchema` and documents `resourceUrl()` /
 `authorizationServerUrl()` as hooks *"for providers implementing
-Cross-App Access."* **None of that is in 1.30.0** — write against the
+Cross App Access."* **None of that is in 1.30.0** — write against the
 `OAuthClientProvider` shape above today, and simplify when v2 lands.
 
 ---

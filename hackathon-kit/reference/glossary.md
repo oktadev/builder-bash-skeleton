@@ -199,7 +199,7 @@ any of these by hand, you've crossed the boundary.
 
 ## XAA-specific
 
-- **Cross-App Access (XAA)** — the umbrella name for the delegation flow
+- **Cross App Access (XAA)** — the umbrella name for the delegation flow
   this kit implements. RFC 8693 Token Exchange (Steps 0b + 1) +
   RFC 7523 JWT-Bearer Grant (Step 2), per
   `draft-ietf-oauth-identity-assertion-authz-grant-04`.

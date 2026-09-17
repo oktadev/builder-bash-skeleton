@@ -13,7 +13,7 @@
 
 ---
 
-You are an AI coding agent helping me build a **Cross-App Access (XAA)
+You are an AI coding agent helping me build a **Cross App Access (XAA)
 Requesting App** against the public xaa.dev playground. Treat this
 message as durable instructions for the entire build session.
 
