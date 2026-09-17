@@ -119,14 +119,6 @@ called out because they're where agents actually drift:
 - **Never retry-loop a rejected refresh token.** It can't be repaired.
 - **Never mix stacks or protocol paths** in one session.
 
-## Session choices
-
-- **`APP_TYPE=standalone`** — default, no MCP dependency.
-- **Stack: Node/TypeScript** — Express, `openid-client@6`, `iron-session`
-  (sealed httpOnly cookie, `xaa_session`), `vitest`. Project lives at the
-  repo root (`package.json`, `src/`, `test/`), alongside `hackathon-kit/`.
-  Boot with `npm run dev`.
-
 ## Fixed environment (xaa.dev)
 
 Three constants — never substitute, never templatise:

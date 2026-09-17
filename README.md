@@ -30,6 +30,101 @@ work.
 
 ---
 
+## What are you actually building?
+
+A small server-side web app that:
+
+1. Logs a user in at **`https://idp.xaa.dev`** via OIDC Authorization
+   Code + PKCE.
+2. Holds an IdP **refresh token** as the session anchor, obtained by
+   requesting `offline_access`.
+3. Mints a delegated **ID-JAG** for `https://auth.resource.xaa.dev` from
+   that refresh token, using **RFC 8693 Token Exchange**.
+4. Trades the ID-JAG for a resource access token using **RFC 7523
+   JWT-Bearer**.
+5. Calls a protected API at **`https://api.resource.xaa.dev`** (default
+   `/api/todos`, or your own BYOR endpoint) with the access token.
+6. Surfaces every step — tokens redacted, errors classified, request
+   timeline visible — in a UI you control.
+
+By the end you'll have a test suite for the error handling, a smoke
+flow that hits real xaa.dev, and an app that fails gracefully —
+including knowing the difference between "re-mint the access token"
+and "the session is over, sign in again."
+
+---
+
+## How does the whole flow work, in one picture?
+
+```
+authorize(+offline_access) ──► ID Token + REFRESH TOKEN
+                                          │
+                                          ▼
+       [1] refresh token → ID-JAG        [2] ID-JAG → access token
+        RFC 8693, CLIENT_*                RFC 7523, RESOURCE_CLIENT_*
+        5 min, single-use-ish             ~2 h, no refresh token
+                                                    │
+                              ┌─────────────────────┴─────────────────────┐
+                              ▼                                           ▼
+                    [3a] standalone                            [3b] MCP client
+                    GET api.resource.xaa.dev/…                 POST mcp.xaa.dev/mcp
+                    Authorization: Bearer                      via OFFICIAL MCP SDK
+
+                        └──── re-run 1+2 on every /api/call ────┘
+```
+
+Two OAuth client pairs. The refresh token is the anchor — hang on to
+it and re-mint everything below it on every call. Full sequence
+diagrams: `hackathon-kit/reference/architecture.md`.
+
+**The one rule people get wrong:** `expired_token` from the resource
+call means *re-mint and retry once*. `expired_token` from the token
+exchange means *the refresh token is dead — sign in again.* Never
+retry the second one.
+
+---
+
+## What do you need installed before you start?
+
+| Need                   | Why                                                                 | Quick check             |
+| ---------------------- | ------------------------------------------------------------------- | ----------------------- |
+| Language runtime       | Whatever you're building in (Python ≥3.11, Node ≥20, Go ≥1.22, …)   | `python --version` etc. |
+| `openssl`              | Generate `SESSION_SECRET`.                                          | `openssl version`       |
+| `curl`                 | Verification checks throughout the kit.                             | `curl --version`        |
+| Accurate system clock  | xaa.dev allows only **30 s** of clock drift. Drift breaks token minting with an error that looks like a code bug. | `date -u` vs any NTP source |
+| Free port              | Default `APP_URL=http://localhost:3000`. Pick another if 3000 is busy — change `APP_URL` + `REDIRECT_URI` together and re-register. | `lsof -i :3000`         |
+| `.env.local`           | `cp .env.example .env.local`, then fill in your credentials.        | `test -f .env.local`    |
+| xaa.dev account        | Registered with **two** client pairs + your callback URI, on the **OIDC tab**. | See `hackathon-kit/reference/env-vars.md` § Registration walkthrough. |
+
+Windows: use Git Bash / WSL for the curl + openssl commands. Generate
+`SESSION_SECRET` with `[Convert]::ToBase64String((1..32 | %{Get-Random -Min 0 -Max 256}))`
+in PowerShell as a fallback.
+
+---
+
+## How do you tell your AI agent to start?
+
+Quick Start step 6 already covers the common case — paste
+`hackathon-kit/IGNITION.md` into an agent with filesystem + shell
+access. The one exception:
+
+| Your tool                                     | Do this                                                                                                          |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Chat-only tools without filesystem access**  | Paste `hackathon-kit/ignition/chat-only.md` instead — copy-paste–driven, slower but works without shell access.  |
+
+### Does my agent need any setup to read this repo?
+
+The repo ships one agent digest, **`AGENTS.md`**, which most agents
+(Codex, Cursor, Copilot, Windsurf, Zed, and more) read automatically —
+no setup needed. Aider and Gemini CLI need one config line each (see
+their docs). **Claude Code** reads `CLAUDE.md`, a one-line file that
+just points at `AGENTS.md` — nothing to configure.
+
+Either way, the agent should still read `hackathon-kit/IGNITION.md`
+first — the digest is a summary, not a substitute.
+
+---
+
 ## Quick start
 
 1. **Install the prerequisites.** Two things, installed and ready to
@@ -64,7 +159,18 @@ work.
    Every xaa.dev credential you get in the next step goes into this
    file; it's gitignored and never touched by the agent.
 
-4. **Register and get your credentials.** In order to get your
+4. **Generate your session secret.** `.env.local` also needs
+   `SESSION_SECRET` — a random string, required no matter which stack
+   you pick, that encrypts+signs the session cookie holding your
+   refresh token. Run:
+   ```bash
+   openssl rand -base64 32
+   ```
+   and paste the output into `SESSION_SECRET` in `.env.local`. No
+   `openssl` on this machine? See *What do you need installed before
+   you start?* above for the Windows fallback.
+
+5. **Register and get your credentials.** In order to get your
    credentials from XAA.dev, you have to register your application to
    get the client ID/secret pairs.
 
@@ -91,68 +197,18 @@ work.
    Stuck? Full walkthrough: `hackathon-kit/reference/env-vars.md` §
    Registration walkthrough.
 
-5. **Start building.** Paste `hackathon-kit/IGNITION.md` into your AI
+6. **Start building.** Paste `hackathon-kit/IGNITION.md` into your AI
    agent's first message. It reads the rest of the kit itself and asks
    you an app-type question and a stack question — answer those and it
-   starts building.
+   starts building. On a chat-only tool with no filesystem access? See
+   *How do you tell your AI agent to start?* above instead.
 
-6. **Start the server yourself, once it's built.** You do, in your own
+7. **Start the server yourself, once it's built.** You do, in your own
    terminal — see *How do you start and stop your server?* below. The
    agent tells you the command; it never runs it for you.
 
 The rest of this README fills in detail on each of these if you get
 stuck.
-
----
-
-## How do you start and stop your server?
-
-**The agent never starts or stops your dev server for you.** Once
-`01-project-skeleton.md` is scaffolded, your agent tells you the exact
-boot command for your stack. It looks like one of these:
-
-| Stack            | Start command                                    | Download                                                        |
-| ---------------- | ------------------------------------------------- | ---------------------------------------------------------------- |
-| Python / FastAPI | `uvicorn xaa_app.main:app --reload --port 3000`   | [python.org/downloads](https://www.python.org/downloads/)        |
-| Node / Express   | `npm run dev`                                     | [nodejs.org/download](https://nodejs.org/en/download)             |
-| Go / chi         | `go run ./cmd/server`                             | [go.dev/dl](https://go.dev/dl/)                                   |
-| Rust / Axum      | `cargo run`                                       | [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install) |
-| Java / Spring    | `./gradlew bootRun` (or `mvn spring-boot:run`)    | [oracle.com/java](https://www.oracle.com/java/technologies/downloads/) |
-| Ruby / Rails     | `bin/rails server`                                | [ruby-lang.org/downloads](https://www.ruby-lang.org/en/downloads/) |
-| .NET             | `dotnet run`                                      | [dotnet.microsoft.com/download](https://dotnet.microsoft.com/download) |
-
-Before you run these commands, make sure the runtime for your stack is
-actually installed. If not, grab it from the official download link
-above.
-
-Ask your agent for the exact command if your entrypoint differs.
-
-**To stop it:** `Ctrl+C` in that terminal, or `kill <pid>` if it's
-already running in the background.
-
----
-
-## What are you actually building?
-
-A small server-side web app that:
-
-1. Logs a user in at **`https://idp.xaa.dev`** via OIDC Authorization
-   Code + PKCE.
-2. Holds an IdP **refresh token** as the session anchor, obtained by
-   requesting `offline_access`.
-3. Mints a delegated **ID-JAG** for `https://auth.resource.xaa.dev` from
-   that refresh token, using **RFC 8693 Token Exchange**.
-4. Trades the ID-JAG for a resource access token using **RFC 7523
-   JWT-Bearer**.
-5. Calls a protected API at **`https://api.resource.xaa.dev`** (default
-   `/api/todos`, or your own BYOR endpoint) with the access token.
-6. Surfaces every step — tokens redacted, errors classified, request
-   timeline visible — in a UI you control.
-
-By the end you'll have a test suite for the error handling, a smoke
-flow that hits real xaa.dev, and an app that fails gracefully —
-including knowing the difference between "re-mint the access token"
-and "the session is over, sign in again."
 
 ---
 
@@ -192,80 +248,12 @@ connects.
 | **Pick any session strategy**        | Sealed httpOnly cookie or server-stored (Redis / SQLite / Postgres) — as long as no raw token reaches the browser and the cookie is httpOnly + `SameSite=Lax`. |
 | **Pick any UI shape**                | Server-rendered templates, an SPA, a TUI, plain HTML — the kit only specifies what must be visible (redacted tokens, the latest ID-JAG, a request timeline).        |
 | **Bring Your Own Resource (BYOR)**   | Default resource is `https://api.resource.xaa.dev/api/todos`, but `RESOURCE_PATH` (and `RESOURCE_URL` for another resource server) can point anywhere xaa.dev knows. |
-| **Bring your own AI agent**          | OpenAI Codex, Claude Code, Cursor, Aider, Copilot, ChatGPT, Cody — see *How do you tell your AI agent to start?* below.                                                                     |
+| **Bring your own AI agent**          | OpenAI Codex, Claude Code, Cursor, Aider, Copilot, ChatGPT, Cody — see *How do you tell your AI agent to start?* above.                                                                     |
 | **Customise scopes + claims**        | `RESOURCE_SCOPES` controls what you ask for; the kit already handles `insufficient_scope` if you ask for too much.                                                                       |
 | **Extend the test matrix**           | The tests in `hackathon-kit/07-testing.md` are the *minimum*, not the ceiling.          |
 
 **What you can't change:** the xaa.dev hostnames, the URN spellings,
 the PKCE method (S256), and the error-code set — those are the spec.
-
----
-
-## How does the whole flow work, in one picture?
-
-```
-authorize(+offline_access) ──► ID Token + REFRESH TOKEN
-                                          │
-                                          ▼
-       [1] refresh token → ID-JAG        [2] ID-JAG → access token
-        RFC 8693, CLIENT_*                RFC 7523, RESOURCE_CLIENT_*
-        5 min, single-use-ish             ~2 h, no refresh token
-                                                    │
-                              ┌─────────────────────┴─────────────────────┐
-                              ▼                                           ▼
-                    [3a] standalone                            [3b] MCP client
-                    GET api.resource.xaa.dev/…                 POST mcp.xaa.dev/mcp
-                    Authorization: Bearer                      via OFFICIAL MCP SDK
-
-                        └──── re-run 1+2 on every /api/call ────┘
-```
-
-Two OAuth client pairs. The refresh token is the anchor — hang on to
-it and re-mint everything below it on every call. Full sequence
-diagrams: `hackathon-kit/reference/architecture.md`.
-
-**The one rule people get wrong:** `expired_token` from the resource
-call means *re-mint and retry once*. `expired_token` from the token
-exchange means *the refresh token is dead — sign in again.* Never
-retry the second one.
-
----
-
-## How do you tell your AI agent to start?
-
-| Your tool                                            | Do this                                                                                                          |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **Any agent with filesystem + shell access**          | Paste `hackathon-kit/IGNITION.md` verbatim as your first message. It reads the rest of the kit itself.           |
-| **Chat-only tools without filesystem access**         | Paste `hackathon-kit/ignition/chat-only.md` instead — copy-paste–driven, slower but works without shell access.  |
-
-### Does my agent need any setup to read this repo?
-
-The repo ships one agent digest, **`AGENTS.md`**, which most agents
-(Codex, Cursor, Copilot, Windsurf, Zed, and more) read automatically —
-no setup needed. Aider and Gemini CLI need one config line each (see
-their docs). **Claude Code** reads `CLAUDE.md`, a one-line file that
-just points at `AGENTS.md` — nothing to configure.
-
-Either way, the agent should still read `hackathon-kit/IGNITION.md`
-first — the digest is a summary, not a substitute.
-
----
-
-## What do you need installed before you start?
-
-| Need                   | Why                                                                 | Quick check             |
-| ---------------------- | ------------------------------------------------------------------- | ----------------------- |
-| Language runtime       | Whatever you're building in (Python ≥3.11, Node ≥20, Go ≥1.22, …)   | `python --version` etc. |
-| `openssl`              | Generate `SESSION_SECRET`.                                          | `openssl version`       |
-| `curl`                 | Verification checks throughout the kit.                             | `curl --version`        |
-| Accurate system clock  | xaa.dev allows only **30 s** of clock drift. Drift breaks token minting with an error that looks like a code bug. | `date -u` vs any NTP source |
-| Free port              | Default `APP_URL=http://localhost:3000`. Pick another if 3000 is busy — change `APP_URL` + `REDIRECT_URI` together and re-register. | `lsof -i :3000`         |
-| `.env.local`           | `cp .env.example .env.local`, then fill in your credentials.        | `test -f .env.local`    |
-| xaa.dev account        | Registered with **two** client pairs + your callback URI, on the **OIDC tab**. | See `hackathon-kit/reference/env-vars.md` § Registration walkthrough. |
-
-Windows: use Git Bash / WSL for the curl + openssl commands. Generate
-`SESSION_SECRET` with `[Convert]::ToBase64String((1..32 | %{Get-Random -Min 0 -Max 256}))`
-in PowerShell as a fallback.
 
 ---
 
@@ -324,6 +312,33 @@ known-good default instead of researching it yourself:
 Each numbered prompt file follows the same shape: **Prompt** (paste into
 your AI) → **Objective** → **Output** → **Issues** → **Fixes** →
 **Verification**.
+
+---
+
+## How do you start and stop your server?
+
+**The agent never starts or stops your dev server for you.** Once
+`01-project-skeleton.md` is scaffolded, your agent tells you the exact
+boot command for your stack. It looks like one of these:
+
+| Stack            | Start command                                    | Download                                                        |
+| ---------------- | ------------------------------------------------- | ---------------------------------------------------------------- |
+| Python / FastAPI | `uvicorn xaa_app.main:app --reload --port 3000`   | [python.org/downloads](https://www.python.org/downloads/)        |
+| Node / Express   | `npm run dev`                                     | [nodejs.org/download](https://nodejs.org/en/download)             |
+| Go / chi         | `go run ./cmd/server`                             | [go.dev/dl](https://go.dev/dl/)                                   |
+| Rust / Axum      | `cargo run`                                       | [rust-lang.org/tools/install](https://www.rust-lang.org/tools/install) |
+| Java / Spring    | `./gradlew bootRun` (or `mvn spring-boot:run`)    | [oracle.com/java](https://www.oracle.com/java/technologies/downloads/) |
+| Ruby / Rails     | `bin/rails server`                                | [ruby-lang.org/downloads](https://www.ruby-lang.org/en/downloads/) |
+| .NET             | `dotnet run`                                      | [dotnet.microsoft.com/download](https://dotnet.microsoft.com/download) |
+
+Before you run these commands, make sure the runtime for your stack is
+actually installed. If not, grab it from the official download link
+above.
+
+Ask your agent for the exact command if your entrypoint differs.
+
+**To stop it:** `Ctrl+C` in that terminal, or `kill <pid>` if it's
+already running in the background.
 
 ---
 
